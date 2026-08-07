@@ -330,7 +330,9 @@ quem comentou (e, opcionalmente, quem curtiu). Prioriza **comentaristas** porque
 são mais engajados. Somente leitura.
 
 - `--limit` (padrão 30): máximo de candidatos únicos.
-- `--posts` (padrão 6): quantas publicações recentes abrir.
+- `--posts` (padrão 6): quantas publicações recentes abrir. A ferramenta rola
+  o grid progressivamente até encontrar essa quantidade (mais as publicações
+  descartadas por `--skip-posts`) ou até o perfil parar de carregar novos posts.
 - `--skip-posts` (padrão 0): pula os primeiros N posts do grid. Útil quando o
   perfil tem **post(s) fixado(s)** no topo — assim a re-execução pega publicações
   mais novas em vez de repetir sempre o mesmo post fixado.

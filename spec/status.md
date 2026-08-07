@@ -176,7 +176,8 @@ Refinamentos pedidos durante os testes reais:
   perfil fechado vira solicitação e não é curtido. Lê o grid da própria página do
   perfil, sem recarregar (otimização).
 - **`--skip-posts <n>`** no collect: pula os primeiros N posts do grid (fixados),
-  para re-execuções pegarem publicações mais novas.
+  para re-execuções pegarem publicações mais novas. O grid é rolado
+  progressivamente até obter `--posts + --skip-posts` itens ou parar de crescer.
 - **`metrics` enriquecido**: follows abertos **por estado** (seguindo vs
   solicitação) e **por campanha**.
 

@@ -16,13 +16,19 @@ async function clickLoadMoreComments(page: Page): Promise<void> {
   for (const selector of selectors) {
     const locator = page.locator(selector);
     if ((await locator.count()) > 0) {
-      await locator.first().click({ timeout: 2000 }).catch(() => undefined);
+      await locator
+        .first()
+        .click({ timeout: 2000 })
+        .catch(() => undefined);
       return;
     }
   }
   const byRole = page.getByRole('button', { name: /load more comments|mais comentários/i });
   if ((await byRole.count()) > 0) {
-    await byRole.first().click({ timeout: 2000 }).catch(() => undefined);
+    await byRole
+      .first()
+      .click({ timeout: 2000 })
+      .catch(() => undefined);
   }
 }
 
@@ -65,7 +71,10 @@ async function scrollCommentPanel(page: Page): Promise<number> {
  * em "carregar mais", até parar de crescer ou atingir o máximo de rodadas.
  * Somente leitura.
  */
-export async function loadAllComments(page: Page, options: { maxRounds?: number } = {}): Promise<void> {
+export async function loadAllComments(
+  page: Page,
+  options: { maxRounds?: number } = {},
+): Promise<void> {
   const maxRounds = options.maxRounds ?? 20;
   // Links de avatar dentro de comentários (têm uma imagem de perfil).
   const commentAvatar = 'a[href^="/"]:has(img[alt])';
@@ -126,30 +135,73 @@ async function readUsernames(page: Page, selector: string, max: number): Promise
   return uniquePreserveOrder(usernames);
 }
 
-/** Lê os shortcodes das publicações recentes visíveis na grade do perfil. */
-export async function readRecentPostShortcodes(page: Page, max = 12): Promise<string[]> {
-  let handles;
-  try {
-    handles = await page.locator(postLocators.postLink).elementHandles();
-  } catch {
-    return [];
-  }
-  const shortcodes: string[] = [];
+async function appendVisiblePostShortcodes(
+  page: Page,
+  shortcodes: string[],
+  seen: Set<string>,
+): Promise<void> {
+  const handles = await page.locator(postLocators.postLink).elementHandles();
   for (const handle of handles) {
     const href = await handle.getAttribute('href');
     if (!href) {
       continue;
     }
     const shortcode = extractShortcodeFromHref(href);
-    if (shortcode) {
+    if (shortcode && !seen.has(shortcode)) {
+      seen.add(shortcode);
       shortcodes.push(shortcode);
     }
   }
-  return uniquePreserveOrder(shortcodes).slice(0, max);
+}
+
+/**
+ * Lê os shortcodes da grade do perfil, rolando a janela para carregar mais
+ * publicações até atingir o limite ou o grid parar de crescer.
+ */
+export async function readRecentPostShortcodes(page: Page, max = 12): Promise<string[]> {
+  if (!Number.isFinite(max) || max <= 0) {
+    return [];
+  }
+
+  const shortcodes: string[] = [];
+  const seen = new Set<string>();
+  const maxRounds = Math.min(40, Math.max(6, Math.ceil(max / 3)));
+  let stableRounds = 0;
+
+  try {
+    await appendVisiblePostShortcodes(page, shortcodes, seen);
+    for (let round = 0; shortcodes.length < max && round < maxRounds; round += 1) {
+      const countBeforeScroll = shortcodes.length;
+      const scrollToGridEnd = `window.scrollTo(
+        0,
+        Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)
+      )`;
+      await page.evaluate(scrollToGridEnd);
+      // Pausa técnica para o carregamento assíncrono do próximo trecho do grid.
+      await page.waitForTimeout(1000);
+      await appendVisiblePostShortcodes(page, shortcodes, seen);
+
+      if (shortcodes.length > countBeforeScroll) {
+        stableRounds = 0;
+      } else {
+        stableRounds += 1;
+        if (stableRounds >= 3) {
+          break;
+        }
+      }
+    }
+  } catch {
+    // Preserva o que já foi lido se a grade mudar durante o carregamento.
+  }
+  return shortcodes.slice(0, max);
 }
 
 /** Extrai usernames válidos dos hrefs de um conjunto de links. */
-async function extractUsernamesFromLinks(page: Page, selector: string, max: number): Promise<string[]> {
+async function extractUsernamesFromLinks(
+  page: Page,
+  selector: string,
+  max: number,
+): Promise<string[]> {
   let handles;
   try {
     handles = await page.locator(selector).elementHandles();
