@@ -1,0 +1,22 @@
+node_modules/
+dist/
+coverage/
+
+# Dados operacionais nunca devem ser versionados nem sincronizados.
+data/
+evidence/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+logs/
+*.log
+
+# Segredos e ambiente
+.env
+.env.*
+
+# Playwright
+test-results/
+playwright-report/
+.playwright/

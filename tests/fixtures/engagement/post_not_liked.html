@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <title>Publicação</title>
+  </head>
+  <body>
+    <main>
+      <button
+        data-testid="like-button"
+        data-liked="false"
+        aria-label="Curtir"
+        onclick="this.dataset.liked='true'; this.setAttribute('aria-label','Descurtir');"
+      >
+        ♥
+      </button>
+    </main>
+  </body>
+</html>

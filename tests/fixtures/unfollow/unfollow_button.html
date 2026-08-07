@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <title>alvo • Instagram</title>
+  </head>
+  <body>
+    <header>
+      <h2 data-testid="profile-username">alvo</h2>
+      <button id="fb" data-testid="follow-button" data-state="FOLLOWING">Seguindo</button>
+      <button
+        data-testid="unfollow-button"
+        onclick="document.getElementById('fb').dataset.state='FOLLOW';"
+      >
+        Deixar de seguir
+      </button>
+    </header>
+  </body>
+</html>
