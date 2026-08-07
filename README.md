@@ -66,8 +66,9 @@ flowchart TD
 
 Cada plano é um **snapshot imutável** (`DRAFT → FROZEN`). A execução é
 **idempotente**: itens já confirmados são pulados; qualquer resultado ambíguo ou
-falha **para o lote** para revisão manual. Reexecutar o mesmo plano continua de
-onde parou (não há retomada automática).
+falha **para o lote** para revisão manual. Um follow ambíguo pode ser pulado por
+decisão explícita com `follow:skip-ambiguous`; depois, reexecutar o mesmo plano
+continua de onde parou (não há retomada automática).
 
 ## Funcionalidades
 
@@ -205,6 +206,7 @@ runs:list | runs:show --run           lista/mostra execuções
 runs:report [--run]                   relatório human-readable de uma execução
 metrics                               métricas agregadas (por estado/campanha)
 follow [--skip-inactive --like]       follow supervisionado (dry-run padrão)
+follow:skip-ambiguous                 libera um follow ambíguo sem repetir o clique
 like-post                             curtida supervisionada de publicação
 reconcile-followback                  observa quem seguiu de volta (leitura)
 plan-unfollow [--campaign ...]        prévia dry-run de unfollow por coorte

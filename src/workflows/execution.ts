@@ -34,13 +34,7 @@ export interface BatchConfig {
 }
 
 export type BatchOutcome =
-  | 'CONFIRMED'
-  | 'SKIPPED'
-  | 'REVIEW'
-  | 'AMBIGUOUS'
-  | 'FAILED'
-  | 'IDEMPOTENT_SKIP'
-  | 'STOP';
+  'CONFIRMED' | 'SKIPPED' | 'REVIEW' | 'AMBIGUOUS' | 'FAILED' | 'IDEMPOTENT_SKIP' | 'STOP';
 
 export interface BatchProgress {
   readonly processed: number;
@@ -127,6 +121,15 @@ export async function runActionBatch(
         continue;
       }
       if (existing.state === 'PENDING' || existing.state === 'AMBIGUOUS') {
+        if (
+          existing.state === 'AMBIGUOUS' &&
+          actions.findReconciliation(existing.id)?.resolution === 'SKIP_NO_RETRY'
+        ) {
+          summary.skipped += 1;
+          summary.processed += 1;
+          emit(item, 'SKIPPED');
+          continue;
+        }
         summary.stopped = true;
         summary.stopReason = 'ação anterior não confirmada; reconcilie antes de prosseguir';
         emit(item, 'STOP');
@@ -151,7 +154,8 @@ export async function runActionBatch(
 
     if (decision.outcome === 'SKIP' || decision.outcome === 'REVIEW') {
       const prep = actions.prepare(basePrepare(config, item, key));
-      const detail = decision.outcome === 'REVIEW' ? `NEEDS_REVIEW: ${decision.reason}` : decision.reason;
+      const detail =
+        decision.outcome === 'REVIEW' ? `NEEDS_REVIEW: ${decision.reason}` : decision.reason;
       actions.transition(prep.attempt.id, 'SKIPPED', { result: detail });
       if (decision.outcome === 'REVIEW') {
         summary.review += 1;

@@ -45,6 +45,32 @@ interface ActionRow {
   readonly ended_at: string | null;
 }
 
+export interface ActionReconciliation {
+  readonly id: string;
+  readonly actionAttemptId: string;
+  readonly resolution: 'SKIP_NO_RETRY';
+  readonly note: string;
+  readonly createdAt: string;
+}
+
+interface ActionReconciliationRow {
+  readonly id: string;
+  readonly action_attempt_id: string;
+  readonly resolution: string;
+  readonly note: string;
+  readonly created_at: string;
+}
+
+function mapReconciliation(row: ActionReconciliationRow): ActionReconciliation {
+  return {
+    id: row.id,
+    actionAttemptId: row.action_attempt_id,
+    resolution: row.resolution as 'SKIP_NO_RETRY',
+    note: row.note,
+    createdAt: row.created_at,
+  };
+}
+
 function mapRow(row: ActionRow): ActionAttempt {
   return {
     id: row.id,
@@ -93,15 +119,14 @@ export class ActionAttemptRepo {
 
   findById(id: string): ActionAttempt | undefined {
     const row = this.db.prepare('SELECT * FROM action_attempts WHERE id = ?').get(id) as
-      | ActionRow
-      | undefined;
+      ActionRow | undefined;
     return row ? mapRow(row) : undefined;
   }
 
   findByIdempotencyKey(key: string): ActionAttempt | undefined {
-    const row = this.db.prepare('SELECT * FROM action_attempts WHERE idempotency_key = ?').get(key) as
-      | ActionRow
-      | undefined;
+    const row = this.db
+      .prepare('SELECT * FROM action_attempts WHERE idempotency_key = ?')
+      .get(key) as ActionRow | undefined;
     return row ? mapRow(row) : undefined;
   }
 
@@ -218,6 +243,48 @@ export class ActionAttemptRepo {
       .prepare('SELECT * FROM action_attempts WHERE run_id = ? ORDER BY created_at')
       .all(runId) as ActionRow[];
     return rows.map(mapRow);
+  }
+
+  findReconciliation(actionAttemptId: string): ActionReconciliation | undefined {
+    const row = this.db
+      .prepare('SELECT * FROM action_reconciliations WHERE action_attempt_id = ?')
+      .get(actionAttemptId) as ActionReconciliationRow | undefined;
+    return row ? mapReconciliation(row) : undefined;
+  }
+
+  /**
+   * Registra a decisão humana de não repetir uma tentativa ambígua. O registro
+   * original permanece AMBIGUOUS; a reconciliação é append-only e auditável.
+   */
+  reconcileAmbiguousAsSkipped(actionAttemptId: string, note: string): ActionReconciliation {
+    const attempt = this.findById(actionAttemptId);
+    if (!attempt) {
+      throw new Error(`Ação não encontrada: ${actionAttemptId}`);
+    }
+    if (attempt.state !== 'AMBIGUOUS') {
+      throw new Error(`Somente ações AMBIGUOUS podem ser puladas (atual: ${attempt.state}).`);
+    }
+    const normalizedNote = note.trim();
+    if (!normalizedNote) {
+      throw new Error('A reconciliação exige uma justificativa.');
+    }
+    const existing = this.findReconciliation(actionAttemptId);
+    if (existing) {
+      return existing;
+    }
+    const id = newId();
+    this.db
+      .prepare(
+        `INSERT INTO action_reconciliations
+           (id, action_attempt_id, resolution, note, created_at)
+         VALUES (?, ?, 'SKIP_NO_RETRY', ?, ?)`,
+      )
+      .run(id, actionAttemptId, normalizedNote, nowIso());
+    const created = this.findReconciliation(actionAttemptId);
+    if (!created) {
+      throw new Error('Falha ao registrar reconciliação.');
+    }
+    return created;
   }
 
   /**

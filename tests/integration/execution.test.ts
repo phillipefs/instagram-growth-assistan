@@ -109,6 +109,17 @@ describe('PlanRepo.progress', () => {
       failed: 1,
       percentDone: 80,
     });
+
+    actions.reconcileAmbiguousAsSkipped(c, 'skip manual');
+    expect(plans.progress(plan.id)).toEqual({
+      total: 5,
+      pending: 1,
+      confirmed: 1,
+      skipped: 2,
+      ambiguous: 0,
+      failed: 1,
+      percentDone: 80,
+    });
   });
 
   it('retorna zeros para um plano sem itens', () => {
@@ -138,9 +149,21 @@ describe('freezeFollowPlan', () => {
       },
       campaign.id,
       [
-        { username: 'invest_a', source: 'RECENT_POST_COMMENTERS', signal: { type: 'COMMENT', mediaShortcode: 'A' } },
-        { username: 'invest_a', source: 'RECENT_POST_LIKERS', signal: { type: 'LIKE', mediaShortcode: 'A' } },
-        { username: 'trader_b', source: 'RECENT_POST_COMMENTERS', signal: { type: 'COMMENT', mediaShortcode: 'A' } },
+        {
+          username: 'invest_a',
+          source: 'RECENT_POST_COMMENTERS',
+          signal: { type: 'COMMENT', mediaShortcode: 'A' },
+        },
+        {
+          username: 'invest_a',
+          source: 'RECENT_POST_LIKERS',
+          signal: { type: 'LIKE', mediaShortcode: 'A' },
+        },
+        {
+          username: 'trader_b',
+          source: 'RECENT_POST_COMMENTERS',
+          signal: { type: 'COMMENT', mediaShortcode: 'A' },
+        },
       ],
     );
 
@@ -191,12 +214,17 @@ describe('runActionBatch', () => {
   it('não executa nada com limite zero (dry-run)', async () => {
     const account = new LocalAccountRepo(db).create({ username: 'c' });
     const actions = new ActionAttemptRepo(db);
-    const summary = await runActionBatch(actions, seedItems(['u1']), {
-      localAccountId: account.id,
-      localAccountUsername: 'c',
-      actionType: 'FOLLOW',
-      limit: 0,
-    }, proceedAndConfirm);
+    const summary = await runActionBatch(
+      actions,
+      seedItems(['u1']),
+      {
+        localAccountId: account.id,
+        localAccountUsername: 'c',
+        actionType: 'FOLLOW',
+        limit: 0,
+      },
+      proceedAndConfirm,
+    );
     expect(summary.proceeded).toBe(0);
     expect(summary.stopped).toBe(true);
     expect(summary.stopReason).toMatch(/limite/);
@@ -205,32 +233,75 @@ describe('runActionBatch', () => {
   it('fecha o lote em resultado ambíguo', async () => {
     const account = new LocalAccountRepo(db).create({ username: 'c' });
     const actions = new ActionAttemptRepo(db);
-    const summary = await runActionBatch(actions, seedItems(['u1', 'u2']), {
-      localAccountId: account.id,
-      localAccountUsername: 'c',
-      actionType: 'FOLLOW',
-      limit: 10,
-    }, {
-      evaluate: () => ({ outcome: 'PROCEED', reason: '' }),
-      execute: () => Promise.resolve({ result: 'AMBIGUOUS' }),
-    });
+    const summary = await runActionBatch(
+      actions,
+      seedItems(['u1', 'u2']),
+      {
+        localAccountId: account.id,
+        localAccountUsername: 'c',
+        actionType: 'FOLLOW',
+        limit: 10,
+      },
+      {
+        evaluate: () => ({ outcome: 'PROCEED', reason: '' }),
+        execute: () => Promise.resolve({ result: 'AMBIGUOUS' }),
+      },
+    );
     expect(summary.ambiguous).toBe(1);
     expect(summary.confirmed).toBe(0);
     expect(summary.stopped).toBe(true);
   });
 
+  it('retoma depois de skip explícito sem repetir a ação ambígua', async () => {
+    const account = new LocalAccountRepo(db).create({ username: 'c' });
+    const actions = new ActionAttemptRepo(db);
+    const items = seedItems(['u1', 'u2']);
+    const config = {
+      localAccountId: account.id,
+      localAccountUsername: 'c',
+      actionType: 'FOLLOW' as const,
+      limit: 10,
+    };
+    let executions = 0;
+    const hooks = {
+      evaluate: () => ({ outcome: 'PROCEED' as const, reason: '' }),
+      execute: () => {
+        executions += 1;
+        return Promise.resolve({
+          result: (executions === 1 ? 'AMBIGUOUS' : 'CONFIRMED') as 'AMBIGUOUS' | 'CONFIRMED',
+        });
+      },
+    };
+
+    const first = await runActionBatch(actions, items, config, hooks);
+    expect(first.ambiguous).toBe(1);
+    const ambiguous = actions.listByProfileId(items[0]!.profileId)[0]!;
+    actions.reconcileAmbiguousAsSkipped(ambiguous.id, 'skip manual');
+
+    const resumed = await runActionBatch(actions, items, config, hooks);
+    expect(resumed.stopped).toBe(false);
+    expect(resumed.skipped).toBe(1);
+    expect(resumed.confirmed).toBe(1);
+    expect(executions).toBe(2);
+  });
+
   it('pula itens marcados como SKIP e continua', async () => {
     const account = new LocalAccountRepo(db).create({ username: 'c' });
     const actions = new ActionAttemptRepo(db);
-    const summary = await runActionBatch(actions, seedItems(['u1', 'u2']), {
-      localAccountId: account.id,
-      localAccountUsername: 'c',
-      actionType: 'FOLLOW',
-      limit: 10,
-    }, {
-      evaluate: () => ({ outcome: 'SKIP', reason: 'já seguindo' }),
-      execute: () => Promise.resolve({ result: 'CONFIRMED' }),
-    });
+    const summary = await runActionBatch(
+      actions,
+      seedItems(['u1', 'u2']),
+      {
+        localAccountId: account.id,
+        localAccountUsername: 'c',
+        actionType: 'FOLLOW',
+        limit: 10,
+      },
+      {
+        evaluate: () => ({ outcome: 'SKIP', reason: 'já seguindo' }),
+        execute: () => Promise.resolve({ result: 'CONFIRMED' }),
+      },
+    );
     expect(summary.skipped).toBe(2);
     expect(summary.confirmed).toBe(0);
     expect(summary.stopped).toBe(false);
@@ -240,13 +311,24 @@ describe('runActionBatch', () => {
     const account = new LocalAccountRepo(db).create({ username: 'c' });
     const actions = new ActionAttemptRepo(db);
     const events: { target: string; outcome: string; processed: number; total: number }[] = [];
-    await runActionBatch(actions, seedItems(['u1', 'u2', 'u3']), {
-      localAccountId: account.id,
-      localAccountUsername: 'c',
-      actionType: 'FOLLOW',
-      limit: 10,
-      onProgress: (p) => events.push({ target: p.targetEntityId, outcome: p.outcome, processed: p.processed, total: p.total }),
-    }, proceedAndConfirm);
+    await runActionBatch(
+      actions,
+      seedItems(['u1', 'u2', 'u3']),
+      {
+        localAccountId: account.id,
+        localAccountUsername: 'c',
+        actionType: 'FOLLOW',
+        limit: 10,
+        onProgress: (p) =>
+          events.push({
+            target: p.targetEntityId,
+            outcome: p.outcome,
+            processed: p.processed,
+            total: p.total,
+          }),
+      },
+      proceedAndConfirm,
+    );
     expect(events).toHaveLength(3);
     expect(events.every((e) => e.outcome === 'CONFIRMED')).toBe(true);
     expect(events.every((e) => e.total === 3)).toBe(true);

@@ -8,7 +8,7 @@ describe('migrações', () => {
     const db = openDatabase(':memory:');
     try {
       const first = runMigrations(db, MIGRATIONS);
-      expect(first).toEqual([1, 2]);
+      expect(first).toEqual([1, 2, 3]);
       const second = runMigrations(db, MIGRATIONS);
       expect(second).toEqual([]);
 
@@ -37,6 +37,7 @@ describe('migrações', () => {
         'relationships',
         'relationship_cycles',
         'action_attempts',
+        'action_reconciliations',
         'candidate_signals',
         'leases',
       ]) {

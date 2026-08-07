@@ -681,13 +681,19 @@ ferramenta falha "fechada" (na dúvida, não age).
 - **`resultado ambíguo; revisão manual necessária`**
   A ferramenta clicou mas **não conseguiu confirmar** visualmente o resultado.
   O lote para por segurança. Verifique manualmente no navegador se a ação
-  aconteceu. Para reprocessar os demais, **crie um plano novo** (veja abaixo).
+  aconteceu. Se quiser deixar esse perfil sem nova tentativa e processar os
+  demais, registre a decisão explicitamente:
+  ```bash
+  npm run dev -- follow:skip-ambiguous --run <RUN_ID> --username <USERNAME> --confirm
+  ```
+  A tentativa original continua ambígua e nenhum ciclo de follow é criado para
+  ela. Depois, reexecute o mesmo plano com um limite positivo.
 
 - **`ação anterior não confirmada; reconcilie antes de prosseguir`**
   Existe uma tentativa anterior **ambígua/pendente** para aquele item, que
-  bloqueia repetir o **mesmo** plano. Solução: gere um **plano novo**
-  (`plan:create-follow` / `plan:create-unfollow`) — os itens ganham IDs novos e
-  o que já foi feito é pulado na inspeção ao vivo.
+  bloqueia repetir o **mesmo** plano. Para um follow ambíguo, use
+  `follow:skip-ambiguous` somente após revisão manual. O comando nunca repete o
+  clique e exige `--confirm`.
 
 - **`WARNING_DETECTED` / `CHALLENGE_DETECTED` / `CAPTCHA_DETECTED`**
   O Instagram sinalizou a conta (aviso, desafio ou CAPTCHA). A ferramenta **para
@@ -768,8 +774,9 @@ npm run dev -- follow --plan <PLANO_FOLLOW> --mode supervised-batch --limit 100
 - `supervised-batch` pede **1 confirmação** no início e depois segue os 100 em
   sequência, sozinho, no navegador visível.
 - **Parada fechada:** se um item der `resultado ambíguo`/falha, o lote para ali;
-  rode o **mesmo** comando de novo para terminar os restantes (os já feitos são
-  pulados por idempotência).
+  revise o item e, para um follow que deve ficar sem nova tentativa, registre
+  `follow:skip-ambiguous`. Depois rode o **mesmo** comando para terminar os
+  restantes (os já feitos são pulados por idempotência).
 - Um lote grande de uma vez aumenta o risco de bloqueio de ação — o `--limit` é
   teto contra excesso acidental, não garantia de segurança. Se preferir ir aos
   poucos, use um `--limit` menor (ex.: 20) e rode mais vezes, ou `--mode confirm-each`.
@@ -808,8 +815,9 @@ npm run dev -- runs:report      # relatório human-readable da última execuçã
 npm run dev -- metrics          # visão agregada (coleta, ações, follows por campanha)
 ```
 
-> **Retomada:** não existe retomada automática — se o lote parar no meio
-> (ambiguidade/falha), reexecutar o **mesmo plano** conclui o restante. Toda
+> **Retomada:** não existe retomada automática. Uma ambiguidade deve ser
+> reconciliada antes; no follow, `follow:skip-ambiguous` permite pular o item sem
+> repetir o clique. Depois, reexecutar o **mesmo plano** conclui o restante. Toda
 > execução exige `--limit` positivo e roda no navegador visível, em sequência.
 
 > **Recomeçar do zero:** para zerar todo o histórico local e testar de novo,

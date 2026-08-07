@@ -90,6 +90,26 @@ describe('ActionAttemptRepo — idempotência e transições', () => {
     });
     expect(() => repo.transition(attempt.id, 'CONFIRMED')).toThrow(InvalidActionTransitionError);
   });
+
+  it('registra skip auditável sem alterar a tentativa ambígua', () => {
+    const { account, profile } = seedAccountAndProfile();
+    const repo = new ActionAttemptRepo(db);
+    const { attempt } = repo.prepare({
+      localAccountId: account.id,
+      profileId: profile.id,
+      actionType: 'FOLLOW',
+      idempotencyKey: 'ambiguous-to-skip',
+    });
+    repo.transition(attempt.id, 'PENDING');
+    repo.transition(attempt.id, 'AMBIGUOUS', { result: 'sem confirmação visual' });
+
+    const first = repo.reconcileAmbiguousAsSkipped(attempt.id, 'revisão manual');
+    const second = repo.reconcileAmbiguousAsSkipped(attempt.id, 'revisão repetida');
+
+    expect(first.resolution).toBe('SKIP_NO_RETRY');
+    expect(second.id).toBe(first.id);
+    expect(repo.findById(attempt.id)?.state).toBe('AMBIGUOUS');
+  });
 });
 
 describe('transações', () => {

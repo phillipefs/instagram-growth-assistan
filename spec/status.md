@@ -156,6 +156,9 @@ documento registra o que foi implementado em relação a elas.
 - **Evidência em falha/ambiguidade**: follow, curtida e unfollow capturam
   screenshot e gravam o caminho em `action_attempts.screenshot_path` não só no
   sucesso, mas também quando o resultado é ambíguo ou falha — para revisão manual.
+- **Skip auditável de follow ambíguo**: `follow:skip-ambiguous` registra uma
+  reconciliação append-only, exige confirmação explícita, não repete o clique e
+  libera os demais itens do mesmo plano.
 - **Relatório e métricas**: `runs:report` gera um relatório human-readable
   consolidado de uma execução (cabeçalho, duração, contadores e itens com
   evidência); `metrics` agrega cobertura de coleta, desfecho das ações, ciclos e
@@ -215,6 +218,7 @@ runs:show --run       # mostra uma execução
 runs:report [--run]   # relatório human-readable de uma execução (padrão: a mais recente)
 metrics               # métricas agregadas (por estado e por campanha; somente leitura)
 follow                # follow supervisionado (dry-run padrão) [--skip-inactive --like]
+follow:skip-ambiguous # pula explicitamente um follow ambíguo sem repetir o clique
 like-post             # curtida supervisionada de publicação recente
 reconcile-followback  # observa quem seguiu de volta (somente leitura)
 plan-unfollow         # prévia dry-run de unfollow por coorte [--campaign]
@@ -222,12 +226,13 @@ plan:create-unfollow  # congela um plano de unfollow imutável
 unfollow              # unfollow supervisionado (dry-run padrão; real exige plano)
 ```
 
-## Modelo de dados (migração 001 + 002)
+## Modelo de dados (migrações 001–003)
 
 Tabelas: `local_accounts`, `profiles`, `profile_aliases`, `campaigns`,
 `campaign_candidates` (com `discovery_source`), `relationships`,
 `relationship_cycles`, `candidate_signals`, `media`, `plans`, `plan_items`,
-`runs`, `action_attempts`, `safety_events`, `leases`, `schema_migrations`.
+`runs`, `action_attempts`, `action_reconciliations`, `safety_events`, `leases`,
+`schema_migrations`.
 
 ## Decisões-chave
 

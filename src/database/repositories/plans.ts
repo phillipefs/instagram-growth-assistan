@@ -170,8 +170,7 @@ export class PlanRepo {
         nowIso(),
       );
     const row = this.db.prepare('SELECT * FROM plan_items WHERE id = ?').get(id) as
-      | PlanItemRow
-      | undefined;
+      PlanItemRow | undefined;
     if (!row) {
       throw new InvalidPlanStateError('Falha ao adicionar item ao plano.');
     }
@@ -193,11 +192,19 @@ export class PlanRepo {
   progress(planId: string): PlanProgress {
     const rows = this.db
       .prepare(
-        `SELECT COALESCE(a.state, 'PENDING') AS state, COUNT(*) AS n
+        `SELECT CASE
+                  WHEN a.state = 'AMBIGUOUS' AND ar.resolution = 'SKIP_NO_RETRY' THEN 'SKIPPED'
+                  ELSE COALESCE(a.state, 'PENDING')
+                END AS state,
+                COUNT(*) AS n
            FROM plan_items pi
            LEFT JOIN action_attempts a ON a.plan_item_id = pi.id
+           LEFT JOIN action_reconciliations ar ON ar.action_attempt_id = a.id
           WHERE pi.plan_id = ?
-          GROUP BY COALESCE(a.state, 'PENDING')`,
+          GROUP BY CASE
+                     WHEN a.state = 'AMBIGUOUS' AND ar.resolution = 'SKIP_NO_RETRY' THEN 'SKIPPED'
+                     ELSE COALESCE(a.state, 'PENDING')
+                   END`,
       )
       .all(planId) as { state: string; n: number }[];
 
@@ -234,7 +241,9 @@ export class PlanRepo {
   freeze(planId: string): Plan {
     const plan = this.getOrThrow(planId);
     if (plan.state !== 'DRAFT') {
-      throw new InvalidPlanStateError(`Só é possível congelar um plano DRAFT (atual: ${plan.state}).`);
+      throw new InvalidPlanStateError(
+        `Só é possível congelar um plano DRAFT (atual: ${plan.state}).`,
+      );
     }
     this.db
       .prepare("UPDATE plans SET state = 'FROZEN', frozen_at = ? WHERE id = ?")
@@ -256,7 +265,9 @@ export class PlanRepo {
   complete(planId: string): Plan {
     const plan = this.getOrThrow(planId);
     if (plan.state !== 'FROZEN') {
-      throw new InvalidPlanStateError(`Só um plano FROZEN pode ser concluído (atual: ${plan.state}).`);
+      throw new InvalidPlanStateError(
+        `Só um plano FROZEN pode ser concluído (atual: ${plan.state}).`,
+      );
     }
     this.db
       .prepare("UPDATE plans SET state = 'COMPLETED', completed_at = ? WHERE id = ?")
