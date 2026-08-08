@@ -181,6 +181,9 @@ Refinamentos pedidos durante os testes reais:
 - **`--skip-posts <n>`** no collect: pula os primeiros N posts do grid (fixados),
   para re-execuções pegarem publicações mais novas. O grid é rolado
   progressivamente até obter `--posts + --skip-posts` itens ou parar de crescer.
+- **`--only-unattempted`** em `plan-follow` e `plan:create-follow`: seleciona
+  somente candidatos sem qualquer tentativa anterior de follow para a conta,
+  incluindo a exclusão de itens pulados, ambíguos ou falhos.
 - **`metrics` enriquecido**: follows abertos **por estado** (seguindo vs
   solicitação) e **por campanha**.
 
@@ -210,7 +213,7 @@ session:clear --confirm  # apaga o perfil local do navegador
 inspect-profile --url    # reconhece um perfil (somente leitura)
 collect               # coleta candidatos engajados (somente leitura) [--skip-posts]
 plan-follow           # prévia dry-run ordenada por engajamento
-plan:create-follow    # congela um plano de follow imutável
+plan:create-follow    # congela plano de follow [--only-unattempted]
 plans:list            # lista planos
 plans:show --plan     # mostra um plano e seus itens (com progresso)
 runs:list             # lista execuções

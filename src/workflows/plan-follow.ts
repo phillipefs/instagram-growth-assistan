@@ -10,14 +10,17 @@ export interface PlanCandidate {
   readonly discoverySource: DiscoverySource;
   readonly score: number;
   readonly alreadyFollowing: boolean;
+  readonly previouslyAttempted: boolean;
   readonly whitelisted: boolean;
   readonly protected: boolean;
 }
 
-export type ExclusionReason = 'whitelisted' | 'protected' | 'already_following';
+export type ExclusionReason =
+  'whitelisted' | 'protected' | 'already_following' | 'previously_attempted';
 
 export interface FollowPreviewOptions {
   readonly limit?: number;
+  readonly onlyUnattempted?: boolean;
 }
 
 export interface FollowPreview {
@@ -41,7 +44,11 @@ export function selectApprovedFollowCandidates(
   options: FollowPreviewOptions = {},
 ): PlanCandidate[] {
   const approved = candidates.filter(
-    (c) => !c.whitelisted && !c.protected && !c.alreadyFollowing,
+    (c) =>
+      !c.whitelisted &&
+      !c.protected &&
+      !c.alreadyFollowing &&
+      !(options.onlyUnattempted && c.previouslyAttempted),
   );
   approved.sort((a, b) => {
     if (b.score !== a.score) {
@@ -66,6 +73,7 @@ export function buildFollowPreview(
     whitelisted: 0,
     protected: 0,
     already_following: 0,
+    previously_attempted: 0,
   };
 
   let approvedCount = 0;
@@ -76,6 +84,8 @@ export function buildFollowPreview(
       excluded.protected += 1;
     } else if (candidate.alreadyFollowing) {
       excluded.already_following += 1;
+    } else if (options.onlyUnattempted && candidate.previouslyAttempted) {
+      excluded.previously_attempted += 1;
     } else {
       approvedCount += 1;
     }
@@ -103,6 +113,7 @@ interface PlanRow {
   readonly discovery_source: string;
   readonly score: number;
   readonly already_following: number;
+  readonly previously_attempted: number;
   readonly whitelisted: number;
   readonly protected: number;
 }
@@ -140,6 +151,12 @@ export function loadFollowCandidates(
              AND rc.unfollowed_at IS NULL
              AND rc.state IN ('FOLLOWING', 'FOLLOW_REQUESTED')
          ) THEN 1 ELSE 0 END AS already_following,
+         CASE WHEN EXISTS (
+           SELECT 1 FROM action_attempts a
+           WHERE a.local_account_id = @account
+             AND a.profile_id = c.profile_id
+             AND a.action_type = 'FOLLOW'
+         ) THEN 1 ELSE 0 END AS previously_attempted,
          COALESCE((SELECT whitelisted FROM relationships r WHERE r.local_account_id = @account AND r.profile_id = c.profile_id), 0) AS whitelisted,
          COALESCE((SELECT protected FROM relationships r WHERE r.local_account_id = @account AND r.profile_id = c.profile_id), 0) AS protected
        FROM campaign_candidates c
@@ -156,6 +173,7 @@ export function loadFollowCandidates(
     discoverySource: row.discovery_source as DiscoverySource,
     score: row.score,
     alreadyFollowing: row.already_following === 1,
+    previouslyAttempted: row.previously_attempted === 1,
     whitelisted: row.whitelisted === 1,
     protected: row.protected === 1,
   }));
@@ -174,6 +192,7 @@ export interface FreezeFollowPlanInput {
   readonly campaignId: string;
   readonly localAccountId: string;
   readonly limit?: number;
+  readonly onlyUnattempted?: boolean;
   readonly configHashInput?: unknown;
 }
 
@@ -191,10 +210,10 @@ export function freezeFollowPlan(
   input: FreezeFollowPlanInput,
 ): FreezeFollowPlanResult {
   const candidates = loadFollowCandidates(db, input.campaignId, input.localAccountId);
-  const approved = selectApprovedFollowCandidates(
-    candidates,
-    input.limit ? { limit: input.limit } : {},
-  );
+  const approved = selectApprovedFollowCandidates(candidates, {
+    ...(input.limit ? { limit: input.limit } : {}),
+    ...(input.onlyUnattempted ? { onlyUnattempted: true } : {}),
+  });
 
   const plans = new PlanRepo(db);
   const plan = plans.create({
@@ -203,9 +222,12 @@ export function freezeFollowPlan(
       campaignId: input.campaignId,
       localAccountId: input.localAccountId,
       limit: input.limit ?? null,
+      onlyUnattempted: input.onlyUnattempted ?? false,
       usernames: approved.map((c) => c.username),
     },
-    config: input.configHashInput ?? { preserveExclusions: ['whitelist', 'protected', 'already_following'] },
+    config: input.configHashInput ?? {
+      preserveExclusions: ['whitelist', 'protected', 'already_following'],
+    },
   });
 
   approved.forEach((candidate, index) => {

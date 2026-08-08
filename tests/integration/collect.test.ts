@@ -8,6 +8,7 @@ import { ProfileRepo } from '../../src/database/repositories/profiles.js';
 import { CampaignCandidateRepo, CampaignRepo } from '../../src/database/repositories/campaigns.js';
 import { CandidateSignalRepo } from '../../src/database/repositories/candidate-signals.js';
 import { RelationshipRepo } from '../../src/database/repositories/relationships.js';
+import { ActionAttemptRepo } from '../../src/database/repositories/actions.js';
 import { ingestDiscovered, type DiscoveredItem } from '../../src/workflows/collect.js';
 import { buildFollowPreview, loadFollowCandidates } from '../../src/workflows/plan-follow.js';
 
@@ -28,9 +29,21 @@ beforeEach(() => {
 
 describe('ingestDiscovered', () => {
   const items: DiscoveredItem[] = [
-    { username: 'invest_a', source: 'RECENT_POST_COMMENTERS', signal: { type: 'COMMENT', mediaShortcode: 'AAA' } },
-    { username: 'invest_a', source: 'RECENT_POST_LIKERS', signal: { type: 'LIKE', mediaShortcode: 'AAA' } },
-    { username: 'trader_b', source: 'RECENT_POST_COMMENTERS', signal: { type: 'COMMENT', mediaShortcode: 'AAA' } },
+    {
+      username: 'invest_a',
+      source: 'RECENT_POST_COMMENTERS',
+      signal: { type: 'COMMENT', mediaShortcode: 'AAA' },
+    },
+    {
+      username: 'invest_a',
+      source: 'RECENT_POST_LIKERS',
+      signal: { type: 'LIKE', mediaShortcode: 'AAA' },
+    },
+    {
+      username: 'trader_b',
+      source: 'RECENT_POST_COMMENTERS',
+      signal: { type: 'COMMENT', mediaShortcode: 'AAA' },
+    },
     { username: 'nome invalido', source: 'FOLLOWERS' },
   ];
 
@@ -64,9 +77,21 @@ describe('loadFollowCandidates + buildFollowPreview', () => {
     const campaign = new CampaignRepo(db).create({ name: 'Plan' });
     const account = new LocalAccountRepo(db).create({ username: 'minha_conta' });
     ingestDiscovered(deps(), campaign.id, [
-      { username: 'invest_a', source: 'RECENT_POST_COMMENTERS', signal: { type: 'COMMENT', mediaShortcode: 'AAA' } },
-      { username: 'invest_a', source: 'RECENT_POST_LIKERS', signal: { type: 'LIKE', mediaShortcode: 'AAA' } },
-      { username: 'trader_b', source: 'RECENT_POST_COMMENTERS', signal: { type: 'COMMENT', mediaShortcode: 'AAA' } },
+      {
+        username: 'invest_a',
+        source: 'RECENT_POST_COMMENTERS',
+        signal: { type: 'COMMENT', mediaShortcode: 'AAA' },
+      },
+      {
+        username: 'invest_a',
+        source: 'RECENT_POST_LIKERS',
+        signal: { type: 'LIKE', mediaShortcode: 'AAA' },
+      },
+      {
+        username: 'trader_b',
+        source: 'RECENT_POST_COMMENTERS',
+        signal: { type: 'COMMENT', mediaShortcode: 'AAA' },
+      },
       { username: 'renda_c', source: 'FOLLOWERS' },
     ]);
 
@@ -79,7 +104,11 @@ describe('loadFollowCandidates + buildFollowPreview', () => {
 
     // trader_b já é seguido → excluído.
     const relB = relationships.ensure(account.id, profiles.findByUsername('trader_b')!.id);
-    relationships.createCycle({ relationshipId: relB.id, origin: 'TOOL_CLICK', state: 'FOLLOWING' });
+    relationships.createCycle({
+      relationshipId: relB.id,
+      origin: 'TOOL_CLICK',
+      state: 'FOLLOWING',
+    });
 
     const candidates = loadFollowCandidates(db, campaign.id, account.id);
     const preview = buildFollowPreview(candidates);
@@ -88,5 +117,17 @@ describe('loadFollowCandidates + buildFollowPreview', () => {
     expect(preview.excluded.already_following).toBe(1);
     expect(preview.proposed.map((p) => p.username)).toEqual(['invest_a']);
     expect(preview.proposed[0]?.score).toBe(5);
+
+    const investA = profiles.findByUsername('invest_a')!;
+    new ActionAttemptRepo(db).prepare({
+      localAccountId: account.id,
+      profileId: investA.id,
+      actionType: 'FOLLOW',
+      idempotencyKey: 'attempt-invest-a',
+    });
+    const refreshed = loadFollowCandidates(db, campaign.id, account.id);
+    const onlyUnattempted = buildFollowPreview(refreshed, { onlyUnattempted: true });
+    expect(onlyUnattempted.totalProposed).toBe(0);
+    expect(onlyUnattempted.excluded.previously_attempted).toBe(1);
   });
 });

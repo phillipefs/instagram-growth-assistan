@@ -17,41 +17,50 @@ export function registerPlanCommands(program: Command): void {
     .requiredOption('--campaign <name>', 'nome da campanha')
     .option('--account <username>', 'conta local (padrão: a primeira registrada)')
     .option('--limit <n>', 'limita a quantidade de itens do plano')
-    .action((options: { campaign: string; account?: string; limit?: string }) => {
-      const db = openAppDatabase();
-      try {
-        const campaign = new CampaignRepo(db).findByName(options.campaign);
-        if (!campaign) {
-          write({ error: `Campanha não encontrada: ${options.campaign}` });
-          process.exitCode = 1;
-          return;
+    .option('--only-unattempted', 'exclui candidatos com qualquer tentativa anterior de follow')
+    .action(
+      (options: {
+        campaign: string;
+        account?: string;
+        limit?: string;
+        onlyUnattempted?: boolean;
+      }) => {
+        const db = openAppDatabase();
+        try {
+          const campaign = new CampaignRepo(db).findByName(options.campaign);
+          if (!campaign) {
+            write({ error: `Campanha não encontrada: ${options.campaign}` });
+            process.exitCode = 1;
+            return;
+          }
+          const accounts = new LocalAccountRepo(db);
+          const account = options.account
+            ? accounts.findByUsername(options.account)
+            : accounts.list()[0];
+          if (!account) {
+            write({ error: 'Nenhuma conta local. Crie com account:create.' });
+            process.exitCode = 1;
+            return;
+          }
+          const limit = options.limit ? Number.parseInt(options.limit, 10) : undefined;
+          const result = freezeFollowPlan(db, {
+            campaignId: campaign.id,
+            localAccountId: account.id,
+            ...(limit ? { limit } : {}),
+            ...(options.onlyUnattempted ? { onlyUnattempted: true } : {}),
+          });
+          write({
+            ok: true,
+            planId: result.plan.id,
+            state: result.plan.state,
+            itemCount: result.itemCount,
+            criteriaHash: result.plan.criteriaHash,
+          });
+        } finally {
+          db.close();
         }
-        const accounts = new LocalAccountRepo(db);
-        const account = options.account
-          ? accounts.findByUsername(options.account)
-          : accounts.list()[0];
-        if (!account) {
-          write({ error: 'Nenhuma conta local. Crie com account:create.' });
-          process.exitCode = 1;
-          return;
-        }
-        const limit = options.limit ? Number.parseInt(options.limit, 10) : undefined;
-        const result = freezeFollowPlan(db, {
-          campaignId: campaign.id,
-          localAccountId: account.id,
-          ...(limit ? { limit } : {}),
-        });
-        write({
-          ok: true,
-          planId: result.plan.id,
-          state: result.plan.state,
-          itemCount: result.itemCount,
-          criteriaHash: result.plan.criteriaHash,
-        });
-      } finally {
-        db.close();
-      }
-    });
+      },
+    );
 
   program
     .command('plans:list')

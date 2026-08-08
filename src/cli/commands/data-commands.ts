@@ -4,10 +4,7 @@ import { migrationStatus } from '../../database/migrator.js';
 import { MIGRATIONS } from '../../database/migrations/index.js';
 import { LocalAccountRepo } from '../../database/repositories/accounts.js';
 import { ProfileRepo } from '../../database/repositories/profiles.js';
-import {
-  CampaignCandidateRepo,
-  CampaignRepo,
-} from '../../database/repositories/campaigns.js';
+import { CampaignCandidateRepo, CampaignRepo } from '../../database/repositories/campaigns.js';
 import { RelationshipRepo } from '../../database/repositories/relationships.js';
 import { ActionAttemptRepo } from '../../database/repositories/actions.js';
 import { canonicalUsername } from '../../database/util.js';
@@ -210,7 +207,10 @@ export function registerDataCommands(program: Command): void {
         }
         const targetUsername = canonicalUsername(options.target);
         const targetUrl = options.url ?? `https://www.instagram.com/${targetUsername}/`;
-        const target = new ProfileRepo(db).upsert({ username: targetUsername, profileUrl: targetUrl });
+        const target = new ProfileRepo(db).upsert({
+          username: targetUsername,
+          profileUrl: targetUrl,
+        });
         const campaign = campaigns.create({
           name: options.name,
           targetProfileId: target.id,
@@ -228,42 +228,49 @@ export function registerDataCommands(program: Command): void {
     .requiredOption('--campaign <name>', 'nome da campanha')
     .option('--account <username>', 'conta local (padrão: a primeira registrada)')
     .option('--limit <n>', 'limita a quantidade de candidatos propostos')
+    .option('--only-unattempted', 'exclui candidatos com qualquer tentativa anterior de follow')
     .option('--export <format>', 'exporta a prévia: csv | json')
     .option('--dry-run', 'apenas prévia (sempre verdadeiro nesta fase)')
-    .action((options: {
-      campaign: string;
-      account?: string;
-      limit?: string;
-      export?: string;
-    }) => {
-      const db = openAppDatabase();
-      try {
-        const campaign = new CampaignRepo(db).findByName(options.campaign);
-        if (!campaign) {
-          write({ error: `Campanha não encontrada: ${options.campaign}` });
-          process.exitCode = 1;
-          return;
-        }
-        const accounts = new LocalAccountRepo(db);
-        const account = options.account
-          ? accounts.findByUsername(options.account)
-          : accounts.list()[0];
-        if (!account) {
-          write({ error: 'Nenhuma conta local. Crie com account:create ou rode fixtures:seed.' });
-          process.exitCode = 1;
-          return;
-        }
-        const limit = options.limit ? Number.parseInt(options.limit, 10) : undefined;
-        const candidates = loadFollowCandidates(db, campaign.id, account.id);
-        const preview = buildFollowPreview(candidates, limit ? { limit } : {});
+    .action(
+      (options: {
+        campaign: string;
+        account?: string;
+        limit?: string;
+        onlyUnattempted?: boolean;
+        export?: string;
+      }) => {
+        const db = openAppDatabase();
+        try {
+          const campaign = new CampaignRepo(db).findByName(options.campaign);
+          if (!campaign) {
+            write({ error: `Campanha não encontrada: ${options.campaign}` });
+            process.exitCode = 1;
+            return;
+          }
+          const accounts = new LocalAccountRepo(db);
+          const account = options.account
+            ? accounts.findByUsername(options.account)
+            : accounts.list()[0];
+          if (!account) {
+            write({ error: 'Nenhuma conta local. Crie com account:create ou rode fixtures:seed.' });
+            process.exitCode = 1;
+            return;
+          }
+          const limit = options.limit ? Number.parseInt(options.limit, 10) : undefined;
+          const candidates = loadFollowCandidates(db, campaign.id, account.id);
+          const preview = buildFollowPreview(candidates, {
+            ...(limit ? { limit } : {}),
+            ...(options.onlyUnattempted ? { onlyUnattempted: true } : {}),
+          });
 
-        if (options.export === 'csv') {
-          process.stdout.write(`${followPreviewToCsv(preview)}\n`);
-          return;
+          if (options.export === 'csv') {
+            process.stdout.write(`${followPreviewToCsv(preview)}\n`);
+            return;
+          }
+          write({ campaign: campaign.name, account: account.username, dryRun: true, preview });
+        } finally {
+          db.close();
         }
-        write({ campaign: campaign.name, account: account.username, dryRun: true, preview });
-      } finally {
-        db.close();
-      }
-    });
+      },
+    );
 }

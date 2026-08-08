@@ -767,6 +767,14 @@ npm run dev -- plan:create-follow --campaign "Teste" --limit 100
 ```
 Copie o `planId` da saída — aqui chamado de `<PLANO_FOLLOW>`.
 
+Para criar um plano apenas com candidatos que nunca tiveram tentativa de follow
+(confirmada, pulada, ambígua ou falha), use:
+
+```bash
+npm run dev -- plan-follow --campaign "Teste" --only-unattempted
+npm run dev -- plan:create-follow --campaign "Teste" --only-unattempted
+```
+
 ### 5. Seguir os 100 de uma vez
 ```bash
 npm run dev -- follow --plan <PLANO_FOLLOW> --mode supervised-batch --limit 100

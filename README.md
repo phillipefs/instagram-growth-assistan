@@ -200,7 +200,7 @@ inspect-profile --url  reconhece um perfil (somente leitura)
 # coleta / plano / execução
 collect [--skip-posts] [--likers]     coleta candidatos engajados (leitura)
 plan-follow                           prévia dry-run ordenada por engajamento
-plan:create-follow                    congela um plano de follow imutável
+plan:create-follow [--only-unattempted]  congela um plano de follow imutável
 plans:list | plans:show --plan        lista/mostra planos (com progresso)
 runs:list | runs:show --run           lista/mostra execuções
 runs:report [--run]                   relatório human-readable de uma execução

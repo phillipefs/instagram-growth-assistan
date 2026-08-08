@@ -174,6 +174,24 @@ describe('freezeFollowPlan', () => {
     const items = new PlanRepo(db).listItems(result.plan.id);
     const firstSnapshot = JSON.parse(items[0]?.snapshotJson ?? '{}') as { username: string };
     expect(firstSnapshot.username).toBe('invest_a');
+
+    new ActionAttemptRepo(db).prepare({
+      localAccountId: account.id,
+      profileId: items[0]!.profileId,
+      actionType: 'FOLLOW',
+      idempotencyKey: 'attempt-invest-a',
+    });
+    const unattempted = freezeFollowPlan(db, {
+      campaignId: campaign.id,
+      localAccountId: account.id,
+      onlyUnattempted: true,
+    });
+    expect(unattempted.itemCount).toBe(1);
+    const unattemptedItems = new PlanRepo(db).listItems(unattempted.plan.id);
+    const remainingSnapshot = JSON.parse(unattemptedItems[0]?.snapshotJson ?? '{}') as {
+      username: string;
+    };
+    expect(remainingSnapshot.username).toBe('trader_b');
   });
 });
 
