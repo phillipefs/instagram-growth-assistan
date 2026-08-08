@@ -73,7 +73,8 @@ continua de onde parou (não há retomada automática).
 ## Funcionalidades
 
 - **Coleta engajada** — descobre comentaristas das publicações recentes do alvo
-  (com rolagem dos comentários); dedup por username; prioriza engajamento.
+  (com rolagem dos comentários e teto configurável por post); dedup por username;
+  prioriza engajamento.
 - **Follow supervisionado** — 4 modos: `dry-run`, `manual`, `confirm-each`,
   `supervised-batch`. Distingue perfil **aberto** (vira follow) de **fechado**
   (vira solicitação).
@@ -138,7 +139,7 @@ npm run dev -- session:open
 npm run dev -- session:check --account <sua_conta>
 
 # 3. Coletar candidatos (somente leitura)
-npm run dev -- collect --campaign "<nome>" --posts 8 --limit 300 --skip-posts 3
+npm run dev -- collect --campaign "<nome>" --posts 8 --limit 300 --skip-posts 3 --comments-per-post 300
 npm run dev -- plan-follow --campaign "<nome>"          # confira preview.totalProposed
 
 # 4. Congelar o plano e seguir (com filtro e like)
@@ -163,7 +164,7 @@ Guia passo a passo detalhado (com saídas de exemplo e solução de problemas):
 ```bash
 npm run dev -- campaign:create --name "investidor10br" --target investidor10br
 npm run dev -- session:check --account danielzp0
-npm run dev -- collect --campaign "investidor10br" --posts 12 --limit 400 --skip-posts 3
+npm run dev -- collect --campaign "investidor10br" --posts 12 --limit 400 --skip-posts 3 --comments-per-post 400
 npm run dev -- plan-follow --campaign "investidor10br"
 npm run dev -- plan:create-follow --campaign "investidor10br" --limit 150
 npm run dev -- follow --plan <ID> --mode supervised-batch --limit 150 --skip-inactive 20 --like
@@ -191,14 +192,14 @@ db:reset --confirm     zera os dados locais (destrutivo)
 # cadastro / sessão
 account:create         registra conta local (sem senha/token)
 campaign:create        cria campanha com perfil-alvo
-campaigns:list | candidates:list | history | fixtures:seed
+campaigns:list | candidates:list [--summary] | history | fixtures:seed
 session:open           abre o navegador para login manual
 session:check          verifica a sessão (somente leitura)
 session:clear --confirm  apaga o perfil local do navegador
 inspect-profile --url  reconhece um perfil (somente leitura)
 
 # coleta / plano / execução
-collect [--skip-posts] [--likers]     coleta candidatos engajados (leitura)
+collect [--skip-posts] [--comments-per-post] [--likers]  coleta candidatos (leitura)
 plan-follow                           prévia dry-run ordenada por engajamento
 plan:create-follow [--only-unattempted]  congela um plano de follow imutável
 plans:list | plans:show --plan        lista/mostra planos (com progresso)

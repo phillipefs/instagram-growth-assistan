@@ -13,6 +13,7 @@ import {
   followPreviewToCsv,
   loadFollowCandidates,
 } from '../../workflows/plan-follow.js';
+import { buildCampaignSummary } from '../../workflows/campaign-summary.js';
 
 function write(payload: unknown): void {
   process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
@@ -79,13 +80,32 @@ export function registerDataCommands(program: Command): void {
     .command('candidates:list')
     .description('Lista candidatos de uma campanha.')
     .requiredOption('--campaign <name>', 'nome da campanha')
-    .action((options: { campaign: string }) => {
+    .option('--summary', 'mostra apenas dados agregados, sem listar candidatos')
+    .option('--account <username>', 'conta usada nas contagens de follow (padrão: a primeira)')
+    .action((options: { campaign: string; summary?: boolean; account?: string }) => {
       const db = openAppDatabase();
       try {
         const campaign = new CampaignRepo(db).findByName(options.campaign);
         if (!campaign) {
           write({ error: `Campanha não encontrada: ${options.campaign}` });
           process.exitCode = 1;
+          return;
+        }
+        if (options.summary) {
+          const accounts = new LocalAccountRepo(db);
+          const account = options.account
+            ? accounts.findByUsername(options.account)
+            : accounts.list()[0];
+          if (!account) {
+            write({ error: 'Nenhuma conta local. Crie com account:create.' });
+            process.exitCode = 1;
+            return;
+          }
+          write({
+            campaign: campaign.name,
+            account: account.username,
+            summary: buildCampaignSummary(db, campaign.id, account.id),
+          });
           return;
         }
         const candidates = new CampaignCandidateRepo(db).listByCampaign(campaign.id);

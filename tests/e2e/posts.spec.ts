@@ -65,6 +65,17 @@ test('lê comentaristas de uma publicação', async ({ page }) => {
   expect(commenters).toEqual(['user1', 'user2', 'user3']);
 });
 
+test('permite extrair mais de 80 comentaristas quando configurado', async ({ page }) => {
+  const links = Array.from(
+    { length: 125 },
+    (_, index) => `<a href="/user${String(index).padStart(3, '0')}/"><img alt="avatar"></a>`,
+  ).join('');
+  await page.setContent(`<main>${links}</main>`);
+
+  expect(await readPostCommenters(page)).toHaveLength(80);
+  expect(await readPostCommenters(page, 120)).toHaveLength(120);
+});
+
 test('lê curtidores quando acessíveis', async ({ page }) => {
   await page.goto(fixtureUrl('post_likers.html'));
   const likers = await readPostLikers(page);

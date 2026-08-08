@@ -25,6 +25,7 @@ linguagem simples), a **forma genérica** e um **exemplo real** de execução.
 13. [Reconciliação de follow-back (opcional)](#10-reconciliação-de-follow-back-opcional)
 14. [Solução de problemas](#solução-de-problemas)
 15. [Workflow end to end (exemplo: 100 follows)](#workflow-end-to-end)
+16. [Receita completa: coleta extensa de status.invest](#receita-completa-coleta-extensa-de-statusinvest-em-lotes)
 
 ---
 
@@ -245,6 +246,22 @@ npm run dev -- candidates:list --campaign "<nome>"
 npm run dev -- candidates:list --campaign "Teste"
 ```
 
+Para ver somente os totais agregados, sem imprimir todos os usernames:
+
+```bash
+npm run dev -- candidates:list --campaign "Teste" --summary
+# conta específica, quando houver mais de uma cadastrada
+npm run dev -- candidates:list --campaign "Teste" --summary --account <sua_conta>
+```
+
+O resumo separa:
+
+- `candidates.total`: total armazenado na campanha;
+- `currentRelationships`: quantos estão seguindo ou com solicitação enviada;
+- `latestFollowAttempts`: último resultado registrado por pessoa;
+- `remaining.eligible`: todos que ainda poderiam entrar em um plano;
+- `remaining.neverAttempted`: somente pessoas sem qualquer tentativa anterior.
+
 ### `history` — histórico de uma pessoa
 Mostra tudo que a ferramenta registrou sobre um username (ciclos e ações).
 
@@ -336,15 +353,21 @@ são mais engajados. Somente leitura.
 - `--skip-posts` (padrão 0): pula os primeiros N posts do grid. Útil quando o
   perfil tem **post(s) fixado(s)** no topo — assim a re-execução pega publicações
   mais novas em vez de repetir sempre o mesmo post fixado.
+- `--comments-per-post` (padrão 80): máximo de usernames extraídos dos
+  comentários de cada publicação. Valores maiores aumentam automaticamente as
+  rodadas técnicas de carregamento (aproximadamente uma rodada para cada 10
+  comentários, entre 15 e 200 rodadas).
 - `--likers`: também tenta curtidores (o Instagram costuma esconder).
 
 ```bash
 # genérico
-npm run dev -- collect --campaign "<nome>" --posts <n> --limit <n>
+npm run dev -- collect --campaign "<nome>" --posts <n> --limit <n> --comments-per-post <n>
 # exemplo real
 npm run dev -- collect --campaign "Teste" --posts 6 --limit 300
 # pulando 3 posts fixados no topo do grid
 npm run dev -- collect --campaign "Teste" --posts 6 --limit 300 --skip-posts 3
+# post muito comentado: tenta extrair até 1.000 comentaristas por publicação
+npm run dev -- collect --campaign "Teste" --posts 1 --limit 1000 --comments-per-post 1000
 ```
 
 **Saída (exemplo):**
@@ -353,6 +376,8 @@ npm run dev -- collect --campaign "Teste" --posts 6 --limit 300 --skip-posts 3
   "ok": true,
   "campaign": "Teste",
   "postsVisited": 6,
+  "commentsPerPost": 80,
+  "commentLoadRounds": 15,
   "input": 92,
   "uniqueUsernames": 83,
   "candidatesCreated": 83,
@@ -361,6 +386,8 @@ npm run dev -- collect --campaign "Teste" --posts 6 --limit 300 --skip-posts 3
 ```
 > `uniqueUsernames` são os candidatos distintos encontrados; `signalsRecorded`
 > conta os sinais de engajamento (um comentário/curtida por publicação).
+> `--comments-per-post` é um teto, não uma garantia: a coleta encerra aquele
+> carregamento se o Instagram parar de entregar novos comentários por 3 rodadas.
 
 ---
 
@@ -750,7 +777,8 @@ npm run dev -- session:check --account <sua_conta> # deve mostrar authenticated 
 
 ### 3. Coletar candidatos (>= 100)
 ```bash
-npm run dev -- collect --campaign "Teste" --posts 8 --limit 300 --skip-posts 0
+npm run dev -- collect --campaign "Teste" --posts 8 --limit 300 --skip-posts 0 --comments-per-post 300
+npm run dev -- candidates:list --campaign "Teste" --summary
 npm run dev -- plan-follow --campaign "Teste"
 ```
 Olhe `preview.totalProposed` na saída do `plan-follow`. **Só avance quando for
@@ -760,6 +788,12 @@ campanha para outro perfil-alvo e colete de novo).
 > `--skip-posts 0` (padrão) não pula nada. Se o alvo tiver **post(s) fixado(s)**
 > no topo, use `--skip-posts 3` para pular os fixados e coletar de publicações
 > mais novas (evita repetir sempre a mesma galera a cada re-execução).
+
+> Em um perfil cujo primeiro post tenha muitos comentários, você pode concentrar
+> a coleta nele com `--posts 1 --limit 1000 --comments-per-post 1000`. A ferramenta
+> tenta carregar até 1.000 usernames, mas pode terminar antes se a interface do
+> Instagram parar de fornecer novos comentários. O limite global `--limit` sempre
+> prevalece.
 
 ### 4. Congelar o plano de follow (100 itens)
 ```bash
@@ -834,10 +868,125 @@ npm run dev -- metrics          # visão agregada (coleta, ações, follows por 
 
 ---
 
+## Receita completa: coleta extensa de `status.invest` em lotes
+
+Esta receita cria a campanha e tenta montar uma base ampla a partir de até 100
+posts. A coleta é somente leitura no Instagram, mas grava candidatos e sinais no
+banco local. Ela **não cria plano e não segue nem curte ninguém**.
+
+### 1. Criar a campanha
+
+```bash
+npm run dev -- campaign:create --name "status_invest" --target status.invest --url "https://www.instagram.com/status.invest/"
+```
+
+Se a campanha já existir, não a recrie; confirme com:
+
+```bash
+npm run dev -- campaigns:list
+```
+
+### 2. Conferir a sessão e a conta ativa
+
+```bash
+npm run dev -- session:check --account appassetlens
+```
+
+Só prossiga se a sessão estiver autenticada, a conta ativa for a esperada e o
+estado de segurança for `SAFE`.
+
+### 3. Coletar até 100 posts em dez lotes
+
+Cada lote tenta abrir 10 posts e extrair até 2.000 comentaristas por post. O
+`--limit 20000` é o teto de candidatos únicos daquela execução. Execute **um
+comando por vez**, confira o resultado e somente então inicie o seguinte.
+
+```bash
+# Posts 1–10
+npm run dev -- collect --campaign "status_invest" --posts 10 --skip-posts 0 --limit 20000 --comments-per-post 2000
+
+# Posts 11–20
+npm run dev -- collect --campaign "status_invest" --posts 10 --skip-posts 10 --limit 20000 --comments-per-post 2000
+
+# Posts 21–30
+npm run dev -- collect --campaign "status_invest" --posts 10 --skip-posts 20 --limit 20000 --comments-per-post 2000
+
+# Posts 31–40
+npm run dev -- collect --campaign "status_invest" --posts 10 --skip-posts 30 --limit 20000 --comments-per-post 2000
+
+# Posts 41–50
+npm run dev -- collect --campaign "status_invest" --posts 10 --skip-posts 40 --limit 20000 --comments-per-post 2000
+
+# Posts 51–60
+npm run dev -- collect --campaign "status_invest" --posts 10 --skip-posts 50 --limit 20000 --comments-per-post 2000
+
+# Posts 61–70
+npm run dev -- collect --campaign "status_invest" --posts 10 --skip-posts 60 --limit 20000 --comments-per-post 2000
+
+# Posts 71–80
+npm run dev -- collect --campaign "status_invest" --posts 10 --skip-posts 70 --limit 20000 --comments-per-post 2000
+
+# Posts 81–90
+npm run dev -- collect --campaign "status_invest" --posts 10 --skip-posts 80 --limit 20000 --comments-per-post 2000
+
+# Posts 91–100
+npm run dev -- collect --campaign "status_invest" --posts 10 --skip-posts 90 --limit 20000 --comments-per-post 2000
+```
+
+Não transforme os comandos em loop automático. Se ocorrer CAPTCHA, desafio,
+aviso de atividade, sessão expirada, troca de conta, domínio inesperado, falha
+repetida ou interface desconhecida, pare e revise manualmente. Não existe
+retomada automática após uma parada de segurança.
+
+Os números são tetos, não garantias. Cada post pode encerrar após 3 rodadas sem
+novos comentários, e o grid para após 3 rodadas sem novos posts ou 40 rodadas no
+total. Se novos posts forem publicados entre os lotes, as posições do grid podem
+mudar; repetições são deduplicadas, mas revise os resultados para identificar
+possíveis lacunas.
+
+### 4. Conferir a base depois de cada lote
+
+```bash
+npm run dev -- candidates:list --campaign "status_invest" --summary --account appassetlens
+```
+
+Observe principalmente:
+
+- `candidates.total`: tamanho atual da base;
+- `engagementSignals.COMMENT`: sinais de comentário registrados;
+- `currentRelationships.total`: candidatos que a conta já segue ou solicitou;
+- `remaining.neverAttempted`: candidatos sem qualquer tentativa de follow.
+
+Rodar novamente um lote não duplica candidatos nem sinais do mesmo post.
+
+### 5. Visualizar uma amostra elegível sem criar plano
+
+```bash
+npm run dev -- plan-follow --campaign "status_invest" --only-unattempted --limit 100
+```
+
+Esse comando é `dry-run`: apenas mostra os 100 primeiros candidatos inéditos
+ordenados por engajamento.
+
+### 6. Parar aqui para seguir em outro momento
+
+Se o objetivo atual é somente montar a base, encerre na etapa anterior. Quando
+decidir seguir, confira novamente a sessão e crie um plano congelado com uma
+quantidade escolhida explicitamente:
+
+```bash
+npm run dev -- plan:create-follow --campaign "status_invest" --only-unattempted --limit <QUANTIDADE>
+```
+
+Revise o `planId` retornado antes de qualquer ação. A execução real continua
+exigindo navegador visível, modo real, limite positivo e confirmação; ela não faz
+parte desta receita de coleta.
+
+---
+
 ## Aviso importante
 
 A automação por interface está sujeita a **mudanças de layout** e às **regras do
 Instagram**. Os limites configuráveis evitam excesso acidental, mas **não
 garantem** segurança perante a plataforma. Use apenas em contas próprias ou
-autorizadas, comece devagar (ex.: 20–30 ações/dia numa conta nova) e aumente aos
-poucos.
+explicitamente autorizadas e interrompa diante de qualquer estado inesperado.

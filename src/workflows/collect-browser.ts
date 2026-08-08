@@ -20,8 +20,22 @@ export interface CollectOptions {
   readonly limit: number;
   readonly postsLimit?: number;
   readonly skipPosts?: number;
+  readonly commentsPerPost?: number;
   readonly includeLikers?: boolean;
   readonly configuredAccount?: string | null;
+}
+
+const DEFAULT_COMMENTS_PER_POST = 80;
+
+export function normalizeCommentsPerPost(value: number | undefined): number {
+  return value !== undefined && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : DEFAULT_COMMENTS_PER_POST;
+}
+
+/** Reserva aproximadamente uma rodada para cada 10 comentários solicitados. */
+export function commentLoadRoundsFor(commentsPerPost: number): number {
+  return Math.min(200, Math.max(15, Math.ceil(normalizeCommentsPerPost(commentsPerPost) / 10)));
 }
 
 export interface CollectBrowserResult {
@@ -46,13 +60,19 @@ export async function collectFromTarget(
   await session.goto(INSTAGRAM_BASE + '/');
   const sessionAssessment = assessSession(await readSessionSignals(page));
   if (sessionAssessment.safetyState !== 'SAFE') {
-    return empty(sessionAssessment.safetyState, `sessão não segura: ${sessionAssessment.safetyState}`);
+    return empty(
+      sessionAssessment.safetyState,
+      `sessão não segura: ${sessionAssessment.safetyState}`,
+    );
   }
   if (sessionAssessment.sessionStatus !== 'authenticated') {
     return empty('SAFE', 'sessão não autenticada; faça login com session:open');
   }
   if (options.configuredAccount) {
-    const comparison = compareActiveAccount(options.configuredAccount, sessionAssessment.activeAccount);
+    const comparison = compareActiveAccount(
+      options.configuredAccount,
+      sessionAssessment.activeAccount,
+    );
     if (comparison.shouldStop) {
       return empty('ACCOUNT_CHANGED', `conta ativa divergente (${comparison.match})`);
     }
@@ -80,26 +100,37 @@ export async function collectFromTarget(
   // peguem publicações mais novas em vez de repetir sempre o post fixado.
   const postsLimit = options.postsLimit ?? 6;
   const skipPosts = Math.max(0, options.skipPosts ?? 0);
-  const shortcodes = (await readRecentPostShortcodes(page, postsLimit + skipPosts)).slice(skipPosts);
+  const shortcodes = (await readRecentPostShortcodes(page, postsLimit + skipPosts)).slice(
+    skipPosts,
+  );
   const items: DiscoveredItem[] = [];
   const seen = new Set<string>();
   let postsVisited = 0;
   let likersUnavailable = 0;
+  const commentsPerPost = normalizeCommentsPerPost(options.commentsPerPost);
+  const commentLoadRounds = commentLoadRoundsFor(commentsPerPost);
 
-  for (const shortcode of shortcodes) {
+  posts: for (const shortcode of shortcodes) {
     if (seen.size >= options.limit) {
       break;
     }
     await session.goto(`${INSTAGRAM_BASE}/p/${shortcode}/`);
     postsVisited += 1;
-    await loadAllComments(page, { maxRounds: 15 });
+    await loadAllComments(page, { maxRounds: commentLoadRounds });
 
-    for (const username of await readPostCommenters(page)) {
+    for (const username of await readPostCommenters(page, commentsPerPost)) {
       if (exclude.has(username)) {
         continue;
       }
-      items.push({ username, source: 'RECENT_POST_COMMENTERS', signal: { type: 'COMMENT', mediaShortcode: shortcode } });
+      items.push({
+        username,
+        source: 'RECENT_POST_COMMENTERS',
+        signal: { type: 'COMMENT', mediaShortcode: shortcode },
+      });
       seen.add(username);
+      if (seen.size >= options.limit) {
+        break posts;
+      }
     }
 
     if (options.includeLikers) {
@@ -111,8 +142,15 @@ export async function collectFromTarget(
         if (exclude.has(username)) {
           continue;
         }
-        items.push({ username, source: 'RECENT_POST_LIKERS', signal: { type: 'LIKE', mediaShortcode: shortcode } });
+        items.push({
+          username,
+          source: 'RECENT_POST_LIKERS',
+          signal: { type: 'LIKE', mediaShortcode: shortcode },
+        });
         seen.add(username);
+        if (seen.size >= options.limit) {
+          break posts;
+        }
       }
     }
   }

@@ -181,6 +181,9 @@ Refinamentos pedidos durante os testes reais:
 - **`--skip-posts <n>`** no collect: pula os primeiros N posts do grid (fixados),
   para re-execuções pegarem publicações mais novas. O grid é rolado
   progressivamente até obter `--posts + --skip-posts` itens ou parar de crescer.
+- **`--comments-per-post <n>`** no collect: substitui o teto padrão de 80
+  comentaristas por publicação e aumenta proporcionalmente as rodadas técnicas
+  de carregamento (máximo 200), sempre respeitando o `--limit` global.
 - **`--only-unattempted`** em `plan-follow` e `plan:create-follow`: seleciona
   somente candidatos sem qualquer tentativa anterior de follow para a conta,
   incluindo a exclusão de itens pulados, ambíguos ou falhos.
@@ -204,7 +207,7 @@ db:reset --confirm    # reseta dados locais (destrutivo, exige confirmação)
 account:create        # registra conta local (sem senha/token)
 campaign:create       # cria campanha com perfil-alvo manual
 campaigns:list        # lista campanhas
-candidates:list       # lista candidatos de uma campanha
+candidates:list       # lista candidatos; --summary mostra somente agregados
 history               # histórico local de um username
 fixtures:seed         # dados de exemplo (sem Instagram)
 session:open          # abre navegador visível para login manual
