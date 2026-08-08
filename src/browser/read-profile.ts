@@ -120,6 +120,7 @@ export async function readProfileSignals(
     followButtonState: await readFollowButtonState(page),
     hasFollowersAccess: (await count(page, profileLocators.followersLink)) > 0,
     postsVisible: await count(page, profileLocators.postLink),
+    postsCount: counts.posts,
     followersCount: counts.followers,
     followingCount: counts.following,
   };

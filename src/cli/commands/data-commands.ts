@@ -14,6 +14,7 @@ import {
   loadFollowCandidates,
 } from '../../workflows/plan-follow.js';
 import { buildCampaignSummary } from '../../workflows/campaign-summary.js';
+import { buildTargetSummary } from '../../workflows/target-summary.js';
 
 function write(payload: unknown): void {
   process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
@@ -110,6 +111,25 @@ export function registerDataCommands(program: Command): void {
         }
         const candidates = new CampaignCandidateRepo(db).listByCampaign(campaign.id);
         write({ campaign: campaign.name, total: candidates.length, candidates });
+      } finally {
+        db.close();
+      }
+    });
+
+  program
+    .command('target:summary')
+    .description('Resume um perfil-alvo agregando todas as campanhas locais relacionadas.')
+    .requiredOption('--username <username>', 'username do perfil-alvo')
+    .action((options: { username: string }) => {
+      const db = openAppDatabase();
+      try {
+        const target = new ProfileRepo(db).findByUsername(options.username);
+        if (!target) {
+          write({ error: `Perfil-alvo não encontrado localmente: ${options.username}` });
+          process.exitCode = 1;
+          return;
+        }
+        write(buildTargetSummary(db, target));
       } finally {
         db.close();
       }

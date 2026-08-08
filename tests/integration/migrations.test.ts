@@ -8,13 +8,51 @@ describe('migrações', () => {
     const db = openDatabase(':memory:');
     try {
       const first = runMigrations(db, MIGRATIONS);
-      expect(first).toEqual([1, 2, 3]);
+      expect(first).toEqual([1, 2, 3, 4]);
       const second = runMigrations(db, MIGRATIONS);
       expect(second).toEqual([]);
 
       const status = migrationStatus(db, MIGRATIONS);
       expect(status[0]?.pending).toBe(false);
       expect(status[0]?.appliedAt).not.toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  it('preserva shortcodes históricos como posts observados ao migrar', () => {
+    const db = openDatabase(':memory:');
+    try {
+      runMigrations(db, MIGRATIONS.slice(0, 3));
+      const at = '2026-08-01T00:00:00.000Z';
+      db.prepare(
+        `INSERT INTO profiles
+           (id, username_canonical, username_display, first_seen_at)
+         VALUES ('target', 'alvo', 'alvo', ?), ('person', 'pessoa', 'pessoa', ?)`,
+      ).run(at, at);
+      db.prepare(
+        `INSERT INTO campaigns
+           (id, name, target_profile_id, status, created_at, updated_at)
+         VALUES ('campaign', 'Campanha', 'target', 'ACTIVE', ?, ?)`,
+      ).run(at, at);
+      db.prepare(
+        `INSERT INTO campaign_candidates
+           (id, campaign_id, profile_id, state, discovery_source, discovered_at, created_at, updated_at)
+         VALUES ('candidate', 'campaign', 'person', 'DISCOVERED',
+                 'RECENT_POST_COMMENTERS', ?, ?, ?)`,
+      ).run(at, at, at);
+      db.prepare(
+        `INSERT INTO candidate_signals
+           (id, campaign_candidate_id, type, media_shortcode, observed_at)
+         VALUES ('signal', 'candidate', 'COMMENT', 'HISTORICO', ?)`,
+      ).run(at);
+
+      expect(runMigrations(db, MIGRATIONS)).toEqual([4]);
+      expect(db.prepare('SELECT profile_id, shortcode, first_seen_at FROM media').get()).toEqual({
+        profile_id: 'target',
+        shortcode: 'HISTORICO',
+        first_seen_at: at,
+      });
     } finally {
       db.close();
     }
@@ -39,6 +77,8 @@ describe('migrações', () => {
         'action_attempts',
         'action_reconciliations',
         'candidate_signals',
+        'target_profile_observations',
+        'media',
         'leases',
       ]) {
         expect(names).toContain(table);

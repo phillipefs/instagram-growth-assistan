@@ -4,6 +4,8 @@ import { test, expect } from '@playwright/test';
 import {
   readPostCommenters,
   readPostLikers,
+  readPostPublishedAt,
+  readRecentPosts,
   readRecentPostShortcodes,
 } from '../../src/browser/read-posts.js';
 
@@ -20,6 +22,21 @@ test('lê shortcodes das publicações recentes', async ({ page }) => {
   expect(shortcodes).toContain('AAA111');
   expect(shortcodes).toContain('BBB222');
   expect(shortcodes).toContain('CCC333');
+});
+
+test('lê metadados da grade e a data da publicação aberta', async ({ page }) => {
+  await page.goto(fixtureUrl('grid_dated.html'));
+  const posts = await readRecentPosts(page, 3);
+  expect(posts[0]).toMatchObject({ shortcode: 'PIN000', isPinned: true });
+  expect(posts[1]).toMatchObject({
+    shortcode: 'NEW222',
+    publishedAt: '2026-08-01T00:00:00.000Z',
+  });
+
+  await page.setContent(
+    '<article><time datetime="2026-08-07T12:30:00Z">7 de agosto</time></article>',
+  );
+  await expect(readPostPublishedAt(page)).resolves.toBe('2026-08-07T12:30:00.000Z');
 });
 
 test('rola a grade até atingir o limite de publicações', async ({ page }) => {

@@ -1,6 +1,7 @@
 import type { Page } from 'playwright';
 import { extractShortcodeFromHref, extractUsernameFromHref } from '../domain/username.js';
 import { LIKERS_HIDDEN_TEXT, postLocators } from '../instagram/post-locators.js';
+import type { PostCandidate } from '../domain/recent-post.js';
 
 function uniquePreserveOrder(values: string[]): string[] {
   return [...new Set(values)];
@@ -137,7 +138,7 @@ async function readUsernames(page: Page, selector: string, max: number): Promise
 
 async function appendVisiblePostShortcodes(
   page: Page,
-  shortcodes: string[],
+  posts: PostCandidate[],
   seen: Set<string>,
 ): Promise<void> {
   const handles = await page.locator(postLocators.postLink).elementHandles();
@@ -149,7 +150,17 @@ async function appendVisiblePostShortcodes(
     const shortcode = extractShortcodeFromHref(href);
     if (shortcode && !seen.has(shortcode)) {
       seen.add(shortcode);
-      shortcodes.push(shortcode);
+      const publishedAt = await handle.getAttribute('data-published-at');
+      const pinnedAttribute = await handle.getAttribute('data-pinned');
+      const pinnedIcon = await handle.$(
+        'svg[aria-label="Pinned post"], svg[aria-label="Publicação fixada"], svg[aria-label="Fixado"]',
+      );
+      posts.push({
+        shortcode,
+        positionIndex: posts.length,
+        ...(publishedAt ? { publishedAt } : {}),
+        isPinned: pinnedAttribute === 'true' || pinnedIcon !== null,
+      });
     }
   }
 }
@@ -158,20 +169,20 @@ async function appendVisiblePostShortcodes(
  * Lê os shortcodes da grade do perfil, rolando a janela para carregar mais
  * publicações até atingir o limite ou o grid parar de crescer.
  */
-export async function readRecentPostShortcodes(page: Page, max = 12): Promise<string[]> {
+export async function readRecentPosts(page: Page, max = 12): Promise<PostCandidate[]> {
   if (!Number.isFinite(max) || max <= 0) {
     return [];
   }
 
-  const shortcodes: string[] = [];
+  const posts: PostCandidate[] = [];
   const seen = new Set<string>();
   const maxRounds = Math.min(40, Math.max(6, Math.ceil(max / 3)));
   let stableRounds = 0;
 
   try {
-    await appendVisiblePostShortcodes(page, shortcodes, seen);
-    for (let round = 0; shortcodes.length < max && round < maxRounds; round += 1) {
-      const countBeforeScroll = shortcodes.length;
+    await appendVisiblePostShortcodes(page, posts, seen);
+    for (let round = 0; posts.length < max && round < maxRounds; round += 1) {
+      const countBeforeScroll = posts.length;
       const scrollToGridEnd = `window.scrollTo(
         0,
         Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)
@@ -179,9 +190,9 @@ export async function readRecentPostShortcodes(page: Page, max = 12): Promise<st
       await page.evaluate(scrollToGridEnd);
       // Pausa técnica para o carregamento assíncrono do próximo trecho do grid.
       await page.waitForTimeout(1000);
-      await appendVisiblePostShortcodes(page, shortcodes, seen);
+      await appendVisiblePostShortcodes(page, posts, seen);
 
-      if (shortcodes.length > countBeforeScroll) {
+      if (posts.length > countBeforeScroll) {
         stableRounds = 0;
       } else {
         stableRounds += 1;
@@ -193,7 +204,28 @@ export async function readRecentPostShortcodes(page: Page, max = 12): Promise<st
   } catch {
     // Preserva o que já foi lido se a grade mudar durante o carregamento.
   }
-  return shortcodes.slice(0, max);
+  return posts.slice(0, max);
+}
+
+export async function readRecentPostShortcodes(page: Page, max = 12): Promise<string[]> {
+  return (await readRecentPosts(page, max)).map((post) => post.shortcode);
+}
+
+/** Lê a data publicada pelo Instagram na página aberta de um post/reel. */
+export async function readPostPublishedAt(page: Page): Promise<string | null> {
+  try {
+    const time = page.locator('article time[datetime], time[datetime]').first();
+    if ((await time.count()) === 0) {
+      return null;
+    }
+    const raw = await time.getAttribute('datetime');
+    if (!raw || !Number.isFinite(Date.parse(raw))) {
+      return null;
+    }
+    return new Date(raw).toISOString();
+  } catch {
+    return null;
+  }
 }
 
 /** Extrai usernames válidos dos hrefs de um conjunto de links. */

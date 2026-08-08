@@ -140,6 +140,7 @@ npm run dev -- session:check --account <sua_conta>
 
 # 3. Coletar candidatos (somente leitura)
 npm run dev -- collect --campaign "<nome>" --posts 8 --limit 300 --skip-posts 3 --comments-per-post 300
+npm run dev -- target:summary --username <perfil_alvo>  # agrega todas as campanhas do alvo
 npm run dev -- plan-follow --campaign "<nome>"          # confira preview.totalProposed
 
 # 4. Congelar o plano e seguir (com filtro e like)

@@ -5,6 +5,7 @@
  */
 
 export interface ProfileCounts {
+  readonly posts: number | null;
   readonly followers: number | null;
   readonly following: number | null;
 }
@@ -54,19 +55,16 @@ export function parseCountToken(raw: string): number | null {
  * O botão "Following" (sem número antes) é naturalmente ignorado.
  */
 export function extractProfileCounts(text: string): ProfileCounts {
-  const words = text.replace(/\s+/g, ' ').trim().split(' ');
-  let followers: number | null = null;
-  let following: number | null = null;
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  const readBefore = (label: RegExp): number | null => {
+    const token = normalized.match(label)?.[1];
+    return token ? parseCountToken(token) : null;
+  };
+  const numberToken = '([0-9][0-9.,]*(?:\\s*(?:k|m|mil|mi))?)';
 
-  for (let i = 1; i < words.length; i += 1) {
-    const word = words[i] ?? '';
-    const prev = words[i - 1] ?? '';
-    if (followers === null && (/^follower/i.test(word) || /^seguidor/i.test(word))) {
-      followers = parseCountToken(prev);
-    } else if (following === null && (/^following/i.test(word) || /^seguindo/i.test(word))) {
-      following = parseCountToken(prev);
-    }
-  }
-
-  return { followers, following };
+  return {
+    posts: readBefore(new RegExp(`${numberToken}\\s+(?:posts?|publicaç(?:ão|ões))\\b`, 'i')),
+    followers: readBefore(new RegExp(`${numberToken}\\s+(?:followers?|seguidores?)\\b`, 'i')),
+    following: readBefore(new RegExp(`${numberToken}\\s+(?:following|seguindo)\\b`, 'i')),
+  };
 }

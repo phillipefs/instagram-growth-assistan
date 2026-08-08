@@ -257,10 +257,72 @@ npm run dev -- candidates:list --campaign "Teste" --summary --account <sua_conta
 O resumo separa:
 
 - `candidates.total`: total armazenado na campanha;
+- `postsWithSignals`: posts distintos que produziram ao menos um comentário ou
+  curtida registrado;
 - `currentRelationships`: quantos estão seguindo ou com solicitação enviada;
 - `latestFollowAttempts`: último resultado registrado por pessoa;
 - `remaining.eligible`: todos que ainda poderiam entrar em um plano;
 - `remaining.neverAttempted`: somente pessoas sem qualquer tentativa anterior.
+
+### `target:summary` — resumo global do perfil-alvo
+
+Agrega automaticamente **todas as campanhas** associadas ao mesmo perfil-alvo,
+sem depender de uma campanha específica e sem abrir o navegador:
+
+```bash
+npm run dev -- target:summary --username "status.invest"
+```
+
+Exemplo reduzido:
+
+```json
+{
+  "target": {
+    "username": "status.invest",
+    "profileUrl": "https://www.instagram.com/status.invest/"
+  },
+  "campaigns": {
+    "total": 2,
+    "items": [
+      { "name": "status_invest", "status": "ACTIVE" },
+      { "name": "status_invest_lote_2", "status": "ACTIVE" }
+    ]
+  },
+  "instagramReportedPosts": 2450,
+  "instagramReportedPostsObservedAt": "2026-08-08T12:00:00.000Z",
+  "collection": {
+    "postsObserved": 100,
+    "postsWithSignals": 92,
+    "postsWithPublishedAt": 80,
+    "newestPostPublishedAt": "2026-08-07T18:30:00.000Z",
+    "oldestPostPublishedAt": "2025-11-20T14:00:00.000Z",
+    "uniqueCandidates": 4200,
+    "engagementSignals": {
+      "total": 5100,
+      "byType": { "COMMENT": 5100 }
+    },
+    "firstObservedAt": "2026-08-01T10:00:00.000Z",
+    "lastObservedAt": "2026-08-08T12:00:00.000Z"
+  }
+}
+```
+
+Significado dos campos de posts:
+
+- `instagramReportedPosts`: total de publicações mostrado no cabeçalho do perfil
+  pelo Instagram na coleta mais recente; é uma fotografia, não uma contagem feita
+  pela ferramenta;
+- `postsObserved`: posts distintos que a ferramenta encontrou na grade;
+- `postsWithSignals`: posts distintos que produziram ao menos um sinal registrado;
+- `postsWithPublishedAt`: posts observados cuja data pôde ser lida ao abrir o post;
+- `newestPostPublishedAt` e `oldestPostPublishedAt`: extremos **entre os posts
+  observados com data**, não necessariamente de todo o perfil.
+
+Posts, candidatos e sinais repetidos em campanhas diferentes são deduplicados.
+Dados coletados antes da inclusão deste comando preservam os shortcodes, mas as
+datas permanecem `null` até que esses posts sejam revisitados. O
+`instagramReportedPosts` também fica `null` até uma coleta bem-sucedida feita com
+esta versão.
 
 ### `history` — histórico de uma pessoa
 Mostra tudo que a ferramenta registrou sobre um username (ciclos e ações).
@@ -948,14 +1010,20 @@ possíveis lacunas.
 
 ```bash
 npm run dev -- candidates:list --campaign "status_invest" --summary --account appassetlens
+npm run dev -- target:summary --username "status.invest"
 ```
 
 Observe principalmente:
 
 - `candidates.total`: tamanho atual da base;
+- `postsWithSignals`: quantidade de posts distintos que geraram sinais;
 - `engagementSignals.COMMENT`: sinais de comentário registrados;
 - `currentRelationships.total`: candidatos que a conta já segue ou solicitou;
 - `remaining.neverAttempted`: candidatos sem qualquer tentativa de follow.
+
+O segundo comando mostra a visão global de `status.invest`, incluindo todas as
+campanhas ligadas ao perfil, os posts distintos observados e as datas mais nova e
+mais antiga que a coleta conseguiu ler.
 
 Rodar novamente um lote não duplica candidatos nem sinais do mesmo post.
 

@@ -9,6 +9,7 @@ export interface Media {
   readonly publishedAt: string | null;
   readonly isPinned: boolean;
   readonly firstSeenAt: string;
+  readonly lastSeenAt: string;
 }
 
 interface MediaRow {
@@ -19,6 +20,7 @@ interface MediaRow {
   readonly published_at: string | null;
   readonly is_pinned: number;
   readonly first_seen_at: string;
+  readonly last_seen_at: string;
 }
 
 function mapRow(row: MediaRow): Media {
@@ -30,6 +32,7 @@ function mapRow(row: MediaRow): Media {
     publishedAt: row.published_at,
     isPinned: intToBool(row.is_pinned),
     firstSeenAt: row.first_seen_at,
+    lastSeenAt: row.last_seen_at,
   };
 }
 
@@ -38,8 +41,7 @@ export class MediaRepo {
 
   findByShortcode(shortcode: string): Media | undefined {
     const row = this.db.prepare('SELECT * FROM media WHERE shortcode = ?').get(shortcode) as
-      | MediaRow
-      | undefined;
+      MediaRow | undefined;
     return row ? mapRow(row) : undefined;
   }
 
@@ -52,13 +54,33 @@ export class MediaRepo {
   }): Media {
     const existing = this.findByShortcode(input.shortcode);
     if (existing) {
-      return existing;
+      if (existing.profileId !== input.profileId) {
+        throw new Error(`Divergência de proprietário da mídia ${input.shortcode}.`);
+      }
+      this.db
+        .prepare(
+          `UPDATE media
+              SET url = COALESCE(?, url),
+                  published_at = COALESCE(?, published_at),
+                  is_pinned = CASE WHEN ? = 1 THEN 1 ELSE is_pinned END,
+                  last_seen_at = ?
+            WHERE id = ?`,
+        )
+        .run(
+          input.url ?? null,
+          input.publishedAt ?? null,
+          boolToInt(input.isPinned ?? false),
+          nowIso(),
+          existing.id,
+        );
+      return this.findByShortcode(input.shortcode) as Media;
     }
     const id = newId();
     this.db
       .prepare(
-        `INSERT INTO media (id, profile_id, shortcode, url, published_at, is_pinned, first_seen_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO media
+           (id, profile_id, shortcode, url, published_at, is_pinned, first_seen_at, last_seen_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -67,6 +89,7 @@ export class MediaRepo {
         input.url ?? null,
         input.publishedAt ?? null,
         boolToInt(input.isPinned ?? false),
+        nowIso(),
         nowIso(),
       );
     const created = this.findByShortcode(input.shortcode);

@@ -8,6 +8,7 @@ import { ProfileRepo } from '../../src/database/repositories/profiles.js';
 import { CampaignCandidateRepo, CampaignRepo } from '../../src/database/repositories/campaigns.js';
 import { ActionAttemptRepo } from '../../src/database/repositories/actions.js';
 import { RelationshipRepo } from '../../src/database/repositories/relationships.js';
+import { CandidateSignalRepo } from '../../src/database/repositories/candidate-signals.js';
 import { buildCampaignSummary } from '../../src/workflows/campaign-summary.js';
 
 let db: SqliteDatabase;
@@ -25,6 +26,7 @@ describe('buildCampaignSummary', () => {
     const candidates = new CampaignCandidateRepo(db);
     const actions = new ActionAttemptRepo(db);
     const relationships = new RelationshipRepo(db);
+    const signals = new CandidateSignalRepo(db);
 
     const seeded = ['seguindo', 'solicitado', 'ambiguo', 'pulado', 'inedito'].map((username) =>
       profiles.upsert({ username }),
@@ -36,6 +38,22 @@ describe('buildCampaignSummary', () => {
         discoverySource: index === 4 ? 'RECENT_POST_LIKERS' : 'RECENT_POST_COMMENTERS',
       }),
     );
+    const storedCandidates = candidates.listByCampaign(campaign.id);
+    signals.record({
+      campaignCandidateId: storedCandidates[0]!.id,
+      type: 'COMMENT',
+      mediaShortcode: 'POST_A',
+    });
+    signals.record({
+      campaignCandidateId: storedCandidates[1]!.id,
+      type: 'COMMENT',
+      mediaShortcode: 'POST_A',
+    });
+    signals.record({
+      campaignCandidateId: storedCandidates[4]!.id,
+      type: 'LIKE',
+      mediaShortcode: 'POST_B',
+    });
 
     const attempt = (index: number, state: 'CONFIRMED' | 'AMBIGUOUS' | 'SKIPPED') => {
       const prepared = actions.prepare({
@@ -71,6 +89,8 @@ describe('buildCampaignSummary', () => {
       RECENT_POST_COMMENTERS: 4,
       RECENT_POST_LIKERS: 1,
     });
+    expect(summary.postsWithSignals).toBe(2);
+    expect(summary.engagementSignals).toEqual({ COMMENT: 2, LIKE: 1 });
     expect(summary.currentRelationships).toEqual({ following: 1, requested: 1, total: 2 });
     expect(summary.latestFollowAttempts).toEqual({
       confirmed: 2,

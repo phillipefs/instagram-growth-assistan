@@ -8,6 +8,8 @@ export interface CampaignSummary {
     readonly bySource: Record<string, number>;
     readonly byState: Record<string, number>;
   };
+  /** Posts distintos que produziram ao menos um sinal de comentário/curtida. */
+  readonly postsWithSignals: number;
   readonly engagementSignals: Record<string, number>;
   readonly currentRelationships: {
     readonly following: number;
@@ -61,6 +63,16 @@ export function buildCampaignSummary(
   for (const row of signalRows) {
     engagementSignals[row.type] = row.n;
   }
+  const postsWithSignals = (
+    db
+      .prepare(
+        `SELECT COUNT(DISTINCT s.media_shortcode) AS n
+           FROM candidate_signals s
+           JOIN campaign_candidates c ON c.id = s.campaign_candidate_id
+          WHERE c.campaign_id = ? AND s.media_shortcode IS NOT NULL`,
+      )
+      .get(campaignId) as { n: number }
+  ).n;
 
   const relationshipCounts = db
     .prepare(
@@ -119,6 +131,7 @@ export function buildCampaignSummary(
 
   return {
     candidates: { total: allCandidates.length, bySource, byState },
+    postsWithSignals,
     engagementSignals,
     currentRelationships: {
       following: relationshipCounts.following,

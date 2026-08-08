@@ -7,7 +7,8 @@ import { readProfileSignals } from '../browser/read-profile.js';
 import {
   readPostCommenters,
   readPostLikers,
-  readRecentPostShortcodes,
+  readPostPublishedAt,
+  readRecentPosts,
   loadAllComments,
 } from '../browser/read-posts.js';
 import { compareActiveAccount } from '../browser/account-guard.js';
@@ -40,6 +41,13 @@ export function commentLoadRoundsFor(commentsPerPost: number): number {
 
 export interface CollectBrowserResult {
   readonly items: DiscoveredItem[];
+  readonly instagramReportedPosts: number | null;
+  readonly observedPosts: readonly {
+    readonly shortcode: string;
+    readonly url: string;
+    readonly publishedAt?: string;
+    readonly isPinned: boolean;
+  }[];
   readonly postsVisited: number;
   readonly likersUnavailable: number;
   readonly stoppedReason: string | null;
@@ -100,9 +108,9 @@ export async function collectFromTarget(
   // peguem publicações mais novas em vez de repetir sempre o post fixado.
   const postsLimit = options.postsLimit ?? 6;
   const skipPosts = Math.max(0, options.skipPosts ?? 0);
-  const shortcodes = (await readRecentPostShortcodes(page, postsLimit + skipPosts)).slice(
-    skipPosts,
-  );
+  const gridPosts = await readRecentPosts(page, postsLimit + skipPosts);
+  const postsToVisit = gridPosts.slice(skipPosts);
+  const publishedDates = new Map<string, string>();
   const items: DiscoveredItem[] = [];
   const seen = new Set<string>();
   let postsVisited = 0;
@@ -110,12 +118,16 @@ export async function collectFromTarget(
   const commentsPerPost = normalizeCommentsPerPost(options.commentsPerPost);
   const commentLoadRounds = commentLoadRoundsFor(commentsPerPost);
 
-  posts: for (const shortcode of shortcodes) {
+  posts: for (const post of postsToVisit) {
     if (seen.size >= options.limit) {
       break;
     }
-    await session.goto(`${INSTAGRAM_BASE}/p/${shortcode}/`);
+    await session.goto(`${INSTAGRAM_BASE}/p/${post.shortcode}/`);
     postsVisited += 1;
+    const publishedAt = await readPostPublishedAt(page);
+    if (publishedAt) {
+      publishedDates.set(post.shortcode, publishedAt);
+    }
     await loadAllComments(page, { maxRounds: commentLoadRounds });
 
     for (const username of await readPostCommenters(page, commentsPerPost)) {
@@ -125,7 +137,7 @@ export async function collectFromTarget(
       items.push({
         username,
         source: 'RECENT_POST_COMMENTERS',
-        signal: { type: 'COMMENT', mediaShortcode: shortcode },
+        signal: { type: 'COMMENT', mediaShortcode: post.shortcode },
       });
       seen.add(username);
       if (seen.size >= options.limit) {
@@ -145,7 +157,7 @@ export async function collectFromTarget(
         items.push({
           username,
           source: 'RECENT_POST_LIKERS',
-          signal: { type: 'LIKE', mediaShortcode: shortcode },
+          signal: { type: 'LIKE', mediaShortcode: post.shortcode },
         });
         seen.add(username);
         if (seen.size >= options.limit) {
@@ -155,9 +167,32 @@ export async function collectFromTarget(
     }
   }
 
-  return { items, postsVisited, likersUnavailable, stoppedReason: null, safetyState: 'SAFE' };
+  return {
+    items,
+    instagramReportedPosts: profile.postsCount,
+    observedPosts: gridPosts.map((post) => ({
+      shortcode: post.shortcode,
+      url: `${INSTAGRAM_BASE}/p/${post.shortcode}/`,
+      ...((publishedDates.get(post.shortcode) ?? post.publishedAt)
+        ? { publishedAt: publishedDates.get(post.shortcode) ?? post.publishedAt }
+        : {}),
+      isPinned: post.isPinned ?? false,
+    })),
+    postsVisited,
+    likersUnavailable,
+    stoppedReason: null,
+    safetyState: 'SAFE',
+  };
 }
 
 function empty(safetyState: SafetyState, reason: string): CollectBrowserResult {
-  return { items: [], postsVisited: 0, likersUnavailable: 0, stoppedReason: reason, safetyState };
+  return {
+    items: [],
+    instagramReportedPosts: null,
+    observedPosts: [],
+    postsVisited: 0,
+    likersUnavailable: 0,
+    stoppedReason: reason,
+    safetyState,
+  };
 }

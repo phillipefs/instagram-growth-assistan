@@ -3,11 +3,7 @@ import type { SafetyTrigger } from '../safety/safety-monitor.js';
 
 export type ProfileType = 'PUBLIC' | 'PRIVATE' | 'UNAVAILABLE' | 'NOT_FOUND' | 'UNKNOWN';
 
-export type ObservedRelationship =
-  | 'NOT_FOLLOWING'
-  | 'FOLLOW_REQUESTED'
-  | 'FOLLOWING'
-  | 'UNKNOWN';
+export type ObservedRelationship = 'NOT_FOLLOWING' | 'FOLLOW_REQUESTED' | 'FOLLOWING' | 'UNKNOWN';
 
 export type FollowButtonState = 'FOLLOW' | 'FOLLOWING' | 'REQUESTED';
 
@@ -24,6 +20,7 @@ export interface ProfileSignals {
   readonly followButtonState: FollowButtonState | null;
   readonly hasFollowersAccess: boolean;
   readonly postsVisible: number;
+  readonly postsCount: number | null;
   readonly followersCount: number | null;
   readonly followingCount: number | null;
 }
@@ -35,6 +32,7 @@ export interface ProfileAssessment {
   readonly hasFollowersAccess: boolean;
   readonly hasPosts: boolean;
   readonly postsVisible: number;
+  readonly postsCount: number | null;
   readonly followersCount: number | null;
   readonly followingCount: number | null;
   readonly safetyState: SafetyState;
@@ -68,22 +66,43 @@ export function assessProfile(signals: ProfileSignals): ProfileAssessment {
     hasFollowersAccess: signals.hasFollowersAccess,
     hasPosts: signals.postsVisible > 0,
     postsVisible: signals.postsVisible,
+    postsCount: signals.postsCount,
     followersCount: signals.followersCount,
     followingCount: signals.followingCount,
     unknownFields: [] as string[],
   };
 
   if (signals.captchaPresent) {
-    return { ...base, profileType: 'UNKNOWN', safetyState: 'CAPTCHA_DETECTED', safetyTrigger: 'CAPTCHA' };
+    return {
+      ...base,
+      profileType: 'UNKNOWN',
+      safetyState: 'CAPTCHA_DETECTED',
+      safetyTrigger: 'CAPTCHA',
+    };
   }
   if (signals.challengePresent) {
-    return { ...base, profileType: 'UNKNOWN', safetyState: 'CHALLENGE_DETECTED', safetyTrigger: 'CHALLENGE' };
+    return {
+      ...base,
+      profileType: 'UNKNOWN',
+      safetyState: 'CHALLENGE_DETECTED',
+      safetyTrigger: 'CHALLENGE',
+    };
   }
   if (signals.warningPresent) {
-    return { ...base, profileType: 'UNKNOWN', safetyState: 'WARNING_DETECTED', safetyTrigger: 'WARNING' };
+    return {
+      ...base,
+      profileType: 'UNKNOWN',
+      safetyState: 'WARNING_DETECTED',
+      safetyTrigger: 'WARNING',
+    };
   }
   if (signals.isUnexpectedDomain) {
-    return { ...base, profileType: 'UNKNOWN', safetyState: 'UNKNOWN_INTERFACE', safetyTrigger: 'UNEXPECTED_DOMAIN' };
+    return {
+      ...base,
+      profileType: 'UNKNOWN',
+      safetyState: 'UNKNOWN_INTERFACE',
+      safetyTrigger: 'UNEXPECTED_DOMAIN',
+    };
   }
   if (signals.notFound) {
     return { ...base, profileType: 'NOT_FOUND', safetyState: 'SAFE', safetyTrigger: null };

@@ -5,6 +5,8 @@ import { LocalAccountRepo } from '../../database/repositories/accounts.js';
 import { ProfileRepo } from '../../database/repositories/profiles.js';
 import { CampaignCandidateRepo, CampaignRepo } from '../../database/repositories/campaigns.js';
 import { CandidateSignalRepo } from '../../database/repositories/candidate-signals.js';
+import { MediaRepo } from '../../database/repositories/media.js';
+import { TargetObservationRepo } from '../../database/repositories/target-observations.js';
 import { ingestDiscovered } from '../../workflows/collect.js';
 import {
   collectFromTarget,
@@ -94,6 +96,20 @@ export function registerCollectCommands(program: Command): void {
             return;
           }
 
+          if (target) {
+            const media = new MediaRepo(db);
+            for (const post of result.observedPosts) {
+              media.upsert({
+                profileId: target.id,
+                shortcode: post.shortcode,
+                url: post.url,
+                ...(post.publishedAt ? { publishedAt: post.publishedAt } : {}),
+                isPinned: post.isPinned,
+              });
+            }
+            new TargetObservationRepo(db).record(target.id, result.instagramReportedPosts);
+          }
+
           const summary = ingestDiscovered(
             {
               profiles: new ProfileRepo(db),
@@ -108,6 +124,8 @@ export function registerCollectCommands(program: Command): void {
           write({
             ok: true,
             campaign: campaign.name,
+            instagramReportedPosts: result.instagramReportedPosts,
+            postsObserved: result.observedPosts.length,
             postsVisited: result.postsVisited,
             likersUnavailable: result.likersUnavailable,
             commentsPerPost,
