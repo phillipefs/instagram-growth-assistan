@@ -18,6 +18,10 @@ export const PROFILE_NOT_FOUND_TEXT =
 export const PROFILE_PRIVATE_TEXT =
   /(this account is private|esta conta é privada|conta privada|account is private)/i;
 
+/** Erro visível de carregamento do conteúdo do perfil. Nunca se age nesse estado. */
+export const PROFILE_LOAD_ERROR_TEXT =
+  /(falha no carregamento|não foi possível carregar|nao foi possivel carregar|couldn'?t load|failed to load)/i;
+
 /**
  * Textos de botão que indicam cada estado de relacionamento.
  *

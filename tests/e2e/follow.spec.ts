@@ -68,3 +68,20 @@ test('não clica quando o botão desaparece entre as duas leituras', async ({ pa
   expect(result.clicked).toBe(false);
   expect(result.notClickedReason).toMatch(/validação instável/);
 });
+
+test('não clica quando o perfil exibe falha de carregamento', async ({ page }) => {
+  await page.goto(fixtureUrl('follow_button.html'));
+  await page
+    .getByRole('main')
+    .getByRole('link')
+    .evaluate((element) => {
+      element.textContent = 'Falha no carregamento.';
+    });
+  const result = await performFollow(page, readOptions, {
+    expectedUsername: 'alvo',
+    stabilityDelayMs: 10,
+  });
+  expect(result.clicked).toBe(false);
+  expect(result.notClickedReason).toMatch(/falha visível de carregamento/);
+  await expect(page.getByTestId('follow-button')).toHaveAttribute('data-state', 'FOLLOW');
+});

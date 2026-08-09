@@ -1,5 +1,9 @@
 import type { Page } from 'playwright';
-import { profileLocators, FOLLOW_BUTTON_TEXT } from '../instagram/profile-locators.js';
+import {
+  profileLocators,
+  FOLLOW_BUTTON_TEXT,
+  PROFILE_LOAD_ERROR_TEXT,
+} from '../instagram/profile-locators.js';
 import { readProfileSignals } from './read-profile.js';
 import type { ReadSignalsOptions } from './read-signals.js';
 import { assessProfile, type ObservedRelationship } from './profile-detector.js';
@@ -50,6 +54,13 @@ async function validateFollowTarget(
   readOptions: ReadSignalsOptions | undefined,
   expectedUsername: string | undefined,
 ): Promise<string | null> {
+  const visibleText = await page
+    .locator('body')
+    .innerText()
+    .catch(() => '');
+  if (PROFILE_LOAD_ERROR_TEXT.test(visibleText)) {
+    return 'perfil com falha visível de carregamento';
+  }
   const signals = await readProfileSignals(page, readOptions);
   const assessment = assessProfile(signals);
   if (assessment.safetyState !== 'SAFE') {
