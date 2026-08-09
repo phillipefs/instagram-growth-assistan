@@ -527,15 +527,23 @@ um `--mode` real e um `--limit` positivo.
   solicitação e **não** são curtidos (você nem vê os posts). No progresso aparece
   uma linha `↳ like @fulano: LIKED`. O total curtido vem em `liked` na saída.
 
-Imediatamente antes de cada follow, a ferramenta faz duas leituras técnicas do
-botão principal `Seguir` dentro do cabeçalho e confere se o username visível é o
-mesmo item do plano. Se o botão não existir, mudar entre as leituras, estiver
-invisível/desabilitado, houver mais de um candidato ou o cabeçalho ainda for do
-perfil anterior, o item é registrado como `SKIPPED` sem clique e o lote continua.
-O mesmo ocorre se a página exibir `Falha no carregamento` antes da ação.
-Botões `Seguir` de sugestões fora do cabeçalho nunca são usados. Se o clique
-ocorrer e o resultado posterior continuar desconhecido, a ação ainda é ambígua
-e a execução para para revisão.
+Imediatamente antes de cada follow, a ferramenta faz duas verificações curtas na
+página já aberta. O botão principal `Seguir` precisa estar estruturalmente ligado
+ao mesmo username e ao bloco de estatísticas do perfil. Botões de `Sugestões para
+você` são excluídos mesmo quando o Instagram os coloca dentro do mesmo `header`.
+Se o controle não existir, estiver duplicado, mudar entre as leituras, ficar
+invisível/desabilitado ou a página exibir `Falha no carregamento`, o item é
+registrado como `SKIPPED` sem clique e o lote continua.
+
+O trial e o clique usam o mesmo nó DOM, impedindo que uma mutação do React troque
+o alvo por um cartão sugerido. Um marcador instalado antes da ação distingue uma
+falha anterior ao clique (skip) de um clique possivelmente despachado. A confirmação
+só é aceita quando o controle primário ligado ao alvo mostra `Seguindo` ou
+`Solicitado` em duas leituras consecutivas; uma mudança transitória não basta.
+A segunda abertura não ocorre no caminho normal: existe somente uma recarga de
+leitura excepcional se um clique foi despachado e nenhuma confirmação permaneceu
+visível. Se essa verificação também ficar desconhecida, a ação é ambígua e a
+execução para para revisão.
 
 ```bash
 # genérico

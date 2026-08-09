@@ -87,10 +87,10 @@ continua de onde parou (não há retomada automática).
 - **Progresso em tempo real** — uma linha por item no lote (`[12/100] @fulano — confirmado ✓`).
 - **Segurança de falha fechada** — para em CAPTCHA, desafio, aviso, sessão
   expirada, troca de conta, interface desconhecida ou divergência.
-- **Guarda do botão principal** — confere duas vezes que `Seguir` está estável
-  no cabeçalho e que o username visível é o esperado; se estiver ausente,
-  instável, divergente ou a página exibir falha de carregamento, pula sem clique
-  e continua o lote.
+- **Guarda do botão principal** — vincula estruturalmente `Seguir` ao username e
+  às estatísticas do perfil, excluindo botões de `Sugestões para você` mesmo
+  quando estão dentro do mesmo `header`; ausência, duplicidade, instabilidade ou
+  falha de carregamento viram skip sem clique.
 - **Auditoria e evidência** — cada tentativa é registrada (runs + `action_attempts`),
   com screenshot em sucesso, ambiguidade e falha.
 - **Métricas e relatórios** — `metrics` (por estado e por campanha) e `runs:report`.

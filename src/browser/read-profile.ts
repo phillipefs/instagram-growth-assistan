@@ -8,7 +8,6 @@ import {
   sessionLocators,
 } from '../instagram/session-locators.js';
 import {
-  FOLLOW_BUTTON_TEXT,
   PROFILE_NOT_FOUND_TEXT,
   PROFILE_PRIVATE_TEXT,
   profileLocators,
@@ -16,11 +15,10 @@ import {
 import type { FollowButtonState, ProfileSignals } from './profile-detector.js';
 import type { ReadSignalsOptions } from './read-signals.js';
 import { extractProfileCounts } from '../domain/profile-counts.js';
+import { resolvePrimaryRelationshipControl } from './profile-relationship-control.js';
 
 // FOLLOWING/REQUESTED antes de FOLLOW: após seguir, o IG mostra sugestões com
 // botões "Follow"; checar o estado seguido primeiro evita falso NOT_FOLLOWING.
-const FOLLOW_STATES: readonly FollowButtonState[] = ['FOLLOWING', 'REQUESTED', 'FOLLOW'];
-
 function hostAllowed(host: string, allowed: readonly string[]): boolean {
   return allowed.some((h) => host === h || host.endsWith(`.${h}`));
 }
@@ -53,30 +51,12 @@ async function headerText(page: Page): Promise<string> {
   return '';
 }
 
-function isFollowState(value: string | null): value is FollowButtonState {
-  return value !== null && (FOLLOW_STATES as readonly string[]).includes(value);
-}
-
-async function readFollowButtonState(page: Page): Promise<FollowButtonState | null> {
-  const hook = page.locator(profileLocators.followButton);
-  if ((await hook.count()) > 0) {
-    const attr = await hook.first().getAttribute('data-state');
-    if (isFollowState(attr)) {
-      return attr;
-    }
-  }
-  // Nunca cai para a página inteira: botões "Follow" de sugestões não podem
-  // representar o relacionamento com o perfil aberto.
-  const scope = page.locator(profileLocators.profileHeader).first();
-  if ((await scope.count()) === 0) {
-    return null;
-  }
-  for (const state of FOLLOW_STATES) {
-    if ((await scope.getByRole('button', { name: FOLLOW_BUTTON_TEXT[state] }).count()) > 0) {
-      return state;
-    }
-  }
-  return null;
+async function readFollowButtonState(
+  page: Page,
+  expectedUsername: string | null,
+): Promise<FollowButtonState | null> {
+  const control = await resolvePrimaryRelationshipControl(page, expectedUsername ?? undefined);
+  return control?.state ?? null;
 }
 
 async function readUsername(page: Page): Promise<string | null> {
@@ -109,6 +89,7 @@ export async function readProfileSignals(
   // Contadores lidos do cabeçalho (mais confiável que a página inteira, que tem
   // "followers" em sugestões); cai para o corpo se não houver header.
   const counts = extractProfileCounts((await headerText(page)) || text);
+  const usernameShown = await readUsername(page);
 
   return {
     url,
@@ -119,8 +100,8 @@ export async function readProfileSignals(
     warningPresent: WARNING_TEXT.test(text),
     notFound: PROFILE_NOT_FOUND_TEXT.test(text),
     isPrivate: PROFILE_PRIVATE_TEXT.test(text),
-    usernameShown: await readUsername(page),
-    followButtonState: await readFollowButtonState(page),
+    usernameShown,
+    followButtonState: await readFollowButtonState(page, usernameShown),
     hasFollowersAccess: (await count(page, profileLocators.followersLink)) > 0,
     postsVisible: await count(page, profileLocators.postLink),
     postsCount: counts.posts,
