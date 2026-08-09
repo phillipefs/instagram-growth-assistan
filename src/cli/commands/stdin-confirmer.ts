@@ -8,6 +8,13 @@ export const NOOP_CONFIRMER: Confirmer = {
   waitForManual: () => Promise.resolve(),
 };
 
+/** Confirmação explícita não interativa, usada somente com a flag CLI --yes. */
+export const YES_CONFIRMER: Confirmer = {
+  confirmBatch: () => Promise.resolve(true),
+  confirmItem: () => Promise.resolve(true),
+  waitForManual: () => Promise.reject(new Error('--yes não é compatível com modo manual')),
+};
+
 /** Confirmador interativo via terminal. */
 export class StdinConfirmer implements Confirmer {
   private readonly rl = createInterface({ input: process.stdin, output: process.stdout });

@@ -5,6 +5,7 @@ export * from './profile-detector.js';
 export * from './read-profile.js';
 export * from './read-posts.js';
 export * from './follow-action.js';
+export * from './profile-network-relationship.js';
 export * from './like-action.js';
 export * from './read-followback.js';
 export * from './followback-detector.js';

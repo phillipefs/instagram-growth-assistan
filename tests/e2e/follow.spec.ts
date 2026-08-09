@@ -114,6 +114,27 @@ test('aceita ação e estatísticas em blocos irmãos da área primária', async
   expect(result).toEqual({ clicked: true, relationship: 'FOLLOWING' });
 });
 
+test('aceita ações e dados em seções irmãs diretas do header', async ({ page }) => {
+  await page.setContent(`
+    <header>
+      <section>
+        <h2>alvo_secoes_irmas</h2>
+        <div><span>9 posts</span><span>122 seguidores</span><span>864 seguindo</span></div>
+      </section>
+      <section>
+        <button id="primary" onclick="this.textContent='Seguindo'">Seguir</button>
+        <button>Enviar mensagem</button>
+      </section>
+    </header>
+  `);
+  const result = await performFollow(page, readOptions, {
+    expectedUsername: 'alvo_secoes_irmas',
+    stabilityDelayMs: 10,
+  });
+  expect(result).toEqual({ clicked: true, relationship: 'FOLLOWING' });
+  await expect(page.locator('#primary')).toHaveText('Seguindo');
+});
+
 test('ignora Suggested for you sem link de perfil', async ({ page }) => {
   await page.setContent(`
     <header>
@@ -322,7 +343,35 @@ test('falha de acionabilidade durante o trial vira skip sem clique', async ({ pa
   expect(result.relationship).toBe('UNKNOWN');
 });
 
-test('não clica quando o perfil exibe falha de carregamento', async ({ page }) => {
+test('tolera substituição do botão pelo React antes do clique', async ({ page }) => {
+  await page.setContent(`
+    <header>
+      <section>
+        <h2>alvo_react</h2>
+        <div>20 posts 500 seguidores 300 seguindo</div>
+        <div style="height:1600px"></div>
+        <button id="primary" onclick="this.textContent='Seguindo'">Seguir</button>
+      </section>
+    </header>
+    <script>
+      window.addEventListener('scroll', () => {
+        const original = document.querySelector('#primary');
+        if (!original) return;
+        const replacement = original.cloneNode(true);
+        replacement.id = 'replacement';
+        original.replaceWith(replacement);
+      }, { once: true });
+    </script>
+  `);
+  const result = await performFollow(page, readOptions, {
+    expectedUsername: 'alvo_react',
+    stabilityDelayMs: 10,
+  });
+  expect(result).toEqual({ clicked: true, relationship: 'FOLLOWING' });
+  await expect(page.locator('#replacement')).toHaveText('Seguindo');
+});
+
+test('ignora falha parcial da grade quando o controle principal está válido', async ({ page }) => {
   await page.goto(fixtureUrl('follow_button.html'));
   await page
     .getByRole('main')
@@ -335,7 +384,19 @@ test('não clica quando o perfil exibe falha de carregamento', async ({ page }) 
     stabilityChecks: 3,
     stabilityDelayMs: 10,
   });
+  expect(result).toEqual({ clicked: true, relationship: 'FOLLOWING' });
+  await expect(page.getByTestId('follow-button')).toHaveAttribute('data-state', 'FOLLOWING');
+});
+
+test('não clica quando a falha deixa o perfil sem controle principal', async ({ page }) => {
+  await page.setContent(`
+    <header><h2>alvo_sem_controle</h2><div>Falha no carregamento.</div></header>
+  `);
+  const result = await performFollow(page, readOptions, {
+    expectedUsername: 'alvo_sem_controle',
+    stabilityChecks: 2,
+    stabilityDelayMs: 10,
+  });
   expect(result.clicked).toBe(false);
-  expect(result.notClickedReason).toMatch(/falha visível de carregamento/);
-  await expect(page.getByTestId('follow-button')).toHaveAttribute('data-state', 'FOLLOW');
+  expect(result.notClickedReason).toMatch(/botão principal Seguir ausente/);
 });

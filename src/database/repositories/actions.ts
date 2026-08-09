@@ -288,6 +288,41 @@ export class ActionAttemptRepo {
   }
 
   /**
+   * Promove explicitamente uma tentativa AMBIGUOUS quando uma leitura posterior
+   * comprova o relacionamento. Não executa nem repete a ação externa.
+   */
+  reconcileAmbiguousAsConfirmed(actionAttemptId: string, note: string): ActionAttempt {
+    const attempt = this.findById(actionAttemptId);
+    if (!attempt) {
+      throw new Error(`Ação não encontrada: ${actionAttemptId}`);
+    }
+    if (attempt.state === 'CONFIRMED') {
+      return attempt;
+    }
+    if (attempt.state !== 'AMBIGUOUS') {
+      throw new Error(`Somente ações AMBIGUOUS podem ser confirmadas (atual: ${attempt.state}).`);
+    }
+    const normalizedNote = note.trim();
+    if (!normalizedNote) {
+      throw new Error('A reconciliação exige uma justificativa.');
+    }
+    const now = nowIso();
+    this.db
+      .prepare(
+        `UPDATE action_attempts
+            SET prev_state = 'AMBIGUOUS', state = 'CONFIRMED', next_state = 'CONFIRMED',
+                result = ?, updated_at = ?
+          WHERE id = ? AND state = 'AMBIGUOUS'`,
+      )
+      .run(normalizedNote, now, actionAttemptId);
+    const updated = this.findById(actionAttemptId);
+    if (!updated) {
+      throw new Error('Falha ao confirmar reconciliação.');
+    }
+    return updated;
+  }
+
+  /**
    * Conta ações reais de uma conta/tipo desde `sinceIso` (inclusive). Conta
    * estados que podem ter alcançado a plataforma (`CONFIRMED` e `AMBIGUOUS`),
    * para que o teto operacional diário seja conservador.

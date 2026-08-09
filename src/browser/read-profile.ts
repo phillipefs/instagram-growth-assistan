@@ -17,6 +17,13 @@ import type { ReadSignalsOptions } from './read-signals.js';
 import { extractProfileCounts } from '../domain/profile-counts.js';
 import { resolvePrimaryRelationshipControl } from './profile-relationship-control.js';
 
+export interface ProfileReadStabilityOptions {
+  /** Total de leituras somente quando a página ainda não parece um perfil. */
+  readonly attempts?: number;
+  /** Pausa técnica entre leituras provisórias. */
+  readonly delayMs?: number;
+}
+
 // FOLLOWING/REQUESTED antes de FOLLOW: após seguir, o IG mostra sugestões com
 // botões "Follow"; checar o estado seguido primeiro evita falso NOT_FOLLOWING.
 function hostAllowed(host: string, allowed: readonly string[]): boolean {
@@ -108,4 +115,47 @@ export async function readProfileSignals(
     followersCount: counts.followers,
     followingCount: counts.following,
   };
+}
+
+/**
+ * Aguarda apenas estados provisórios de carregamento. Sinais explícitos de
+ * segurança, domínio inesperado e perfil inexistente são devolvidos de imediato.
+ */
+export async function readSettledProfileSignals(
+  page: Page,
+  options: ReadSignalsOptions = {},
+  stability: ProfileReadStabilityOptions = {},
+): Promise<ProfileSignals> {
+  const attempts = Math.max(1, Math.floor(stability.attempts ?? 6));
+  const delayMs = Math.max(0, Math.floor(stability.delayMs ?? 500));
+  let lastSignals: ProfileSignals | null = null;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const signals = await readProfileSignals(page, options);
+      lastSignals = signals;
+      const explicitlyClassifiable =
+        signals.usernameShown !== null ||
+        signals.notFound ||
+        signals.isUnexpectedDomain ||
+        signals.captchaPresent ||
+        signals.challengePresent ||
+        signals.warningPresent;
+      if (explicitlyClassifiable || attempt === attempts) {
+        return signals;
+      }
+    } catch (error) {
+      lastError = error;
+      if (page.isClosed() || attempt === attempts) {
+        throw error;
+      }
+    }
+    await page.waitForTimeout(delayMs);
+  }
+
+  if (lastSignals) {
+    return lastSignals;
+  }
+  throw lastError ?? new Error('não foi possível ler o perfil');
 }

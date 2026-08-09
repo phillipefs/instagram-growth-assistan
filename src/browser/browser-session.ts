@@ -4,7 +4,7 @@ import { resolveDataPaths } from '../config/paths.js';
 import { compareActiveAccount, type AccountComparison } from './account-guard.js';
 import { readSessionSignals, type ReadSignalsOptions } from './read-signals.js';
 import { assessSession, type SessionAssessment, type SessionSignals } from './session-detector.js';
-import { readProfileSignals } from './read-profile.js';
+import { readSettledProfileSignals } from './read-profile.js';
 import { assessProfile, type ProfileAssessment, type ProfileSignals } from './profile-detector.js';
 
 const INSTAGRAM_URL = 'https://www.instagram.com/';
@@ -77,7 +77,7 @@ export class BrowserSession {
   /** Abre um perfil e o reconhece em modo somente leitura (sem cliques). */
   async inspectProfile(url: string, readOptions?: ReadSignalsOptions): Promise<ProfileReport> {
     await this.goto(url);
-    const signals = await readProfileSignals(this.page, readOptions);
+    const signals = await readSettledProfileSignals(this.page, readOptions);
     const assessment = assessProfile(signals);
     return { requestedUrl: url, finalUrl: this.page.url(), assessment, signals };
   }

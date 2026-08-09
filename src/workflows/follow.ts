@@ -197,6 +197,12 @@ export async function runFollow(
           planFrozen: options.planFrozen,
           observedRelationship: insp.relationship,
         });
+        if (decision.outcome === 'STOP') {
+          const shot = await driver.screenshot(`follow-stopped-${item.username}`).catch(() => null);
+          return shot
+            ? { ...decision, reason: `${decision.reason}; evidência: ${shot}` }
+            : decision;
+        }
         if (decision.outcome !== 'PROCEED') {
           return decision;
         }

@@ -110,6 +110,27 @@ describe('ActionAttemptRepo — idempotência e transições', () => {
     expect(second.id).toBe(first.id);
     expect(repo.findById(attempt.id)?.state).toBe('AMBIGUOUS');
   });
+
+  it('confirma tentativa ambígua após observação posterior sem nova ação', () => {
+    const { account, profile } = seedAccountAndProfile();
+    const repo = new ActionAttemptRepo(db);
+    const { attempt } = repo.prepare({
+      localAccountId: account.id,
+      profileId: profile.id,
+      actionType: 'FOLLOW',
+      idempotencyKey: 'ambiguous-confirmed-later',
+    });
+    repo.transition(attempt.id, 'PENDING');
+    repo.transition(attempt.id, 'AMBIGUOUS', { result: 'sem confirmação visual' });
+
+    const confirmed = repo.reconcileAmbiguousAsConfirmed(
+      attempt.id,
+      'reconciliado por leitura posterior: FOLLOW_REQUESTED',
+    );
+
+    expect(confirmed.state).toBe('CONFIRMED');
+    expect(confirmed.result).toContain('FOLLOW_REQUESTED');
+  });
 });
 
 describe('transações', () => {

@@ -18,12 +18,14 @@ export function registerPlanCommands(program: Command): void {
     .option('--account <username>', 'conta local (padrão: a primeira registrada)')
     .option('--limit <n>', 'limita a quantidade de itens do plano')
     .option('--only-unattempted', 'exclui candidatos com qualquer tentativa anterior de follow')
+    .option('--usernames <list>', 'restringe a usernames exatos separados por vírgula')
     .action(
       (options: {
         campaign: string;
         account?: string;
         limit?: string;
         onlyUnattempted?: boolean;
+        usernames?: string;
       }) => {
         const db = openAppDatabase();
         try {
@@ -43,11 +45,16 @@ export function registerPlanCommands(program: Command): void {
             return;
           }
           const limit = options.limit ? Number.parseInt(options.limit, 10) : undefined;
+          const usernames = options.usernames
+            ?.split(',')
+            .map((username) => username.trim())
+            .filter(Boolean);
           const result = freezeFollowPlan(db, {
             campaignId: campaign.id,
             localAccountId: account.id,
             ...(limit ? { limit } : {}),
             ...(options.onlyUnattempted ? { onlyUnattempted: true } : {}),
+            ...(usernames && usernames.length > 0 ? { usernames } : {}),
           });
           write({
             ok: true,

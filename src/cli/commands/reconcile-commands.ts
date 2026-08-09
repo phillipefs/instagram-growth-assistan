@@ -2,11 +2,14 @@ import type { Command } from 'commander';
 import { BrowserSession } from '../../browser/browser-session.js';
 import { readProfileSignals } from '../../browser/read-profile.js';
 import { assessProfile } from '../../browser/profile-detector.js';
+import { observePositiveProfileRelationship } from '../../browser/profile-network-relationship.js';
 import { readFollowsYou } from '../../browser/read-followback.js';
 import { openAppDatabase } from '../../database/app-db.js';
+import { withTransaction } from '../../database/connection.js';
 import { LocalAccountRepo } from '../../database/repositories/accounts.js';
 import { CampaignRepo } from '../../database/repositories/campaigns.js';
 import { ActionAttemptRepo } from '../../database/repositories/actions.js';
+import { RelationshipRepo } from '../../database/repositories/relationships.js';
 import { ProfileRepo } from '../../database/repositories/profiles.js';
 import { RunRepo } from '../../database/repositories/runs.js';
 import { canonicalUsername } from '../../database/util.js';
@@ -112,6 +115,134 @@ export function registerReconcileCommands(program: Command): void {
         }
       },
     );
+
+  program
+    .command('follow:confirm-ambiguous')
+    .description('Confirma por leitura um follow ambíguo, sem repetir o clique.')
+    .requiredOption('--run <id>', 'run que contém a tentativa ambígua')
+    .requiredOption('--username <username>', 'perfil ambíguo a verificar')
+    .option('--confirm', 'autoriza registrar a confirmação observada localmente')
+    .action(async (options: { run: string; username: string; confirm?: boolean }) => {
+      if (!options.confirm) {
+        write({ ok: false, error: 'Confirmação obrigatória. Repita com --confirm.' });
+        process.exitCode = 1;
+        return;
+      }
+
+      const db = openAppDatabase();
+      let session: BrowserSession | null = null;
+      try {
+        const run = new RunRepo(db).get(options.run);
+        if (!run || run.type !== 'FOLLOW') {
+          throw new Error(`Run de FOLLOW não encontrada: ${options.run}`);
+        }
+        if (!run.localAccountId) {
+          throw new Error(`Run sem conta local: ${run.id}`);
+        }
+        const account = new LocalAccountRepo(db).findById(run.localAccountId);
+        if (!account) {
+          throw new Error(`Conta local não encontrada: ${run.localAccountId}`);
+        }
+        const profile = new ProfileRepo(db).findByUsername(canonicalUsername(options.username));
+        if (!profile) {
+          throw new Error(`Perfil não encontrado: ${options.username}`);
+        }
+        const actions = new ActionAttemptRepo(db);
+        const matches = actions
+          .listByRunId(run.id)
+          .filter(
+            (attempt) =>
+              attempt.actionType === 'FOLLOW' &&
+              attempt.profileId === profile.id &&
+              attempt.state === 'AMBIGUOUS',
+          );
+        if (matches.length !== 1) {
+          throw new Error(
+            `Esperada exatamente uma tentativa FOLLOW ambígua; encontradas: ${matches.length}.`,
+          );
+        }
+        const attempt = matches[0]!;
+
+        session = await BrowserSession.open({ visible: true });
+        await session.goto();
+        const sessionReport = await session.assess(account.username);
+        if (
+          sessionReport.assessment.safetyState !== 'SAFE' ||
+          sessionReport.assessment.sessionStatus !== 'authenticated' ||
+          sessionReport.account?.shouldStop
+        ) {
+          throw new Error('Sessão ou conta ativa não está segura para reconciliar.');
+        }
+        const network = observePositiveProfileRelationship(
+          session.activePage,
+          profile.usernameCanonical,
+        );
+        let observed: Awaited<ReturnType<BrowserSession['inspectProfile']>>;
+        let relationship: 'FOLLOWING' | 'FOLLOW_REQUESTED' | 'UNKNOWN';
+        try {
+          observed = await session.inspectProfile(
+            `https://www.instagram.com/${profile.usernameCanonical}/`,
+          );
+          const visualRelationship = observed.assessment.relationshipState;
+          relationship =
+            visualRelationship === 'FOLLOWING' || visualRelationship === 'FOLLOW_REQUESTED'
+              ? visualRelationship
+              : ((await network.waitFor(500)) ?? 'UNKNOWN');
+        } finally {
+          network.dispose();
+        }
+        if (
+          observed.assessment.safetyState !== 'SAFE' ||
+          canonicalUsername(observed.assessment.username ?? '') !== profile.usernameCanonical ||
+          (relationship !== 'FOLLOWING' && relationship !== 'FOLLOW_REQUESTED')
+        ) {
+          throw new Error(
+            `Relacionamento não confirmado por leitura: ${relationship} (${observed.assessment.safetyState}).`,
+          );
+        }
+
+        const result = withTransaction(db, () => {
+          const confirmed = actions.reconcileAmbiguousAsConfirmed(
+            attempt.id,
+            `reconciliado por leitura posterior: ${relationship}`,
+          );
+          const relationships = new RelationshipRepo(db);
+          const relation = relationships.ensure(account.id, profile.id);
+          const existingCycle = relationships.getOpenCycle(relation.id);
+          const cycle =
+            existingCycle ??
+            relationships.createCycle({
+              relationshipId: relation.id,
+              origin: 'TOOL_CLICK',
+              state: relationship,
+              ...(attempt.campaignId ? { campaignId: attempt.campaignId } : {}),
+              followRunId: run.id,
+              ...(relationship === 'FOLLOW_REQUESTED' && attempt.startedAt
+                ? { followRequestedAt: attempt.startedAt }
+                : {}),
+              ...(relationship === 'FOLLOWING' && attempt.startedAt
+                ? { followedAt: attempt.startedAt }
+                : {}),
+            });
+          return { confirmed, cycle };
+        });
+
+        write({
+          ok: true,
+          username: profile.usernameCanonical,
+          relationship,
+          actionAttemptId: result.confirmed.id,
+          relationshipCycleId: result.cycle.id,
+          warning: 'Reconciliação somente leitura; nenhum clique foi executado.',
+        });
+      } catch (error) {
+        write({ ok: false, error: error instanceof Error ? error.message : String(error) });
+        process.exitCode = 1;
+      } finally {
+        await session?.close().catch(() => undefined);
+        db.close();
+      }
+    });
 
   program
     .command('reconcile-followback')

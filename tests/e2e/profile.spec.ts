@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test, expect } from '@playwright/test';
-import { readProfileSignals } from '../../src/browser/read-profile.js';
+import { readProfileSignals, readSettledProfileSignals } from '../../src/browser/read-profile.js';
 import { assessProfile } from '../../src/browser/profile-detector.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -45,4 +45,25 @@ test('reconhece perfil inexistente', async ({ page }) => {
   await page.goto(fixtureUrl('notfound.html'));
   const assessment = assessProfile(await readProfileSignals(page, readOptions));
   expect(assessment.profileType).toBe('NOT_FOUND');
+});
+
+test('aguarda renderização transitória antes de declarar interface desconhecida', async ({
+  page,
+}) => {
+  await page.setContent(`
+    <main>Carregando...</main>
+    <script>
+      setTimeout(() => {
+        document.body.innerHTML = '<header><h2>perfil_tardio</h2><div>10 posts 100 seguidores 50 seguindo</div><button>Seguir</button></header>';
+      }, 250);
+    </script>
+  `);
+  const signals = await readSettledProfileSignals(page, readOptions, {
+    attempts: 5,
+    delayMs: 100,
+  });
+  const assessment = assessProfile(signals);
+  expect(assessment.safetyState).toBe('SAFE');
+  expect(assessment.username).toBe('perfil_tardio');
+  expect(assessment.relationshipState).toBe('NOT_FOLLOWING');
 });

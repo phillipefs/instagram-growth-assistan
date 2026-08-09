@@ -171,6 +171,25 @@ describe('runFollow', () => {
     expect(driver.followCalls).toBe(0);
   });
 
+  it('para com evidência quando a interface permanece desconhecida', async () => {
+    const account = new LocalAccountRepo(db).create({ username: 'minha_conta' });
+    const driver = new FakeDriver(
+      'UNKNOWN',
+      'UNKNOWN',
+      'UNKNOWN_INTERFACE',
+      '/evidence/unknown-interface.png',
+    );
+    const summary = await runFollow(db, seedItems(['u1']), driver, new FakeConfirmer(), {
+      mode: 'supervised-batch',
+      limit: 5,
+      ...baseOptions(account.id),
+    });
+    expect(summary.stopped).toBe(true);
+    expect(summary.stopReason).toContain('UNKNOWN_INTERFACE');
+    expect(summary.stopReason).toContain('/evidence/unknown-interface.png');
+    expect(driver.followCalls).toBe(0);
+  });
+
   it('pula quem já é seguido (guarda)', async () => {
     const account = new LocalAccountRepo(db).create({ username: 'minha_conta' });
     const driver = new FakeDriver('FOLLOWING', 'FOLLOWING');

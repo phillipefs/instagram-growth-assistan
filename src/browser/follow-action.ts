@@ -1,9 +1,9 @@
 import type { JSHandle, Page } from 'playwright';
-import { PROFILE_LOAD_ERROR_TEXT } from '../instagram/profile-locators.js';
 import { readProfileSignals } from './read-profile.js';
 import type { ReadSignalsOptions } from './read-signals.js';
 import { assessProfile, type ObservedRelationship } from './profile-detector.js';
 import { resolvePrimaryRelationshipControl } from './profile-relationship-control.js';
+import { observePositiveProfileRelationship } from './profile-network-relationship.js';
 
 export interface PerformFollowResult {
   readonly clicked: boolean;
@@ -32,6 +32,7 @@ interface FollowClickRecord {
 
 interface ClickFollowResult {
   readonly clicked: boolean;
+  readonly notClickedReason?: string;
 }
 
 interface ConfirmationRead {
@@ -49,13 +50,6 @@ async function validateFollowTarget(
   readOptions: ReadSignalsOptions | undefined,
   expectedUsername: string | undefined,
 ): Promise<string | null> {
-  const visibleText = await page
-    .locator('body')
-    .innerText()
-    .catch(() => '');
-  if (PROFILE_LOAD_ERROR_TEXT.test(visibleText)) {
-    return 'perfil com falha visível de carregamento';
-  }
   const signals = await readProfileSignals(page, readOptions);
   const assessment = assessProfile(signals);
   if (assessment.safetyState !== 'SAFE') {
@@ -100,27 +94,68 @@ async function installFollowClickRecord(
   });
 }
 
-async function remainsTheSamePrimaryControl(
+async function resolvePrimaryFollowButton(
   page: Page,
-  button: RelationshipButtonHandle,
   expectedUsername: string | undefined,
+): Promise<RelationshipButtonHandle | null> {
+  const control = await resolvePrimaryRelationshipControl(page, expectedUsername);
+  if (!control || control.state !== 'FOLLOW' || !(await control.locator.isEnabled())) {
+    return null;
+  }
+  return control.locator.elementHandle();
+}
+
+async function sameElement(
+  original: RelationshipButtonHandle,
+  resolved: RelationshipButtonHandle,
 ): Promise<boolean> {
-  const current = await resolvePrimaryRelationshipControl(page, expectedUsername);
-  if (!current || current.state !== 'FOLLOW' || !(await current.locator.isEnabled())) {
-    return false;
-  }
-  const currentHandle = await current.locator.elementHandle();
-  if (!currentHandle) {
-    return false;
-  }
   try {
-    return await button.evaluate(
-      (original, resolved) => original.isConnected && original === resolved,
-      currentHandle,
+    return await original.evaluate(
+      (element, current) => element.isConnected && element === current,
+      resolved,
     );
-  } finally {
-    await currentHandle.dispose().catch(() => undefined);
+  } catch {
+    return false;
   }
+}
+
+/**
+ * Tolera uma substituição técnica do nó pelo React, desde que o novo controle
+ * continue sendo resolvido estruturalmente como o botão principal do mesmo alvo.
+ * Nenhum clique real é despachado durante esta preparação.
+ */
+async function preparePrimaryFollowButton(
+  page: Page,
+  expectedUsername: string | undefined,
+): Promise<RelationshipButtonHandle | null> {
+  const attempts = 2;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const candidate = await resolvePrimaryFollowButton(page, expectedUsername).catch(() => null);
+    if (!candidate) {
+      if (attempt < attempts) {
+        await page.waitForTimeout(200);
+      }
+      continue;
+    }
+    try {
+      await candidate.click({ trial: true, timeout: 4000 });
+      const current = await resolvePrimaryFollowButton(page, expectedUsername).catch(() => null);
+      if (current) {
+        const stable = await sameElement(candidate, current);
+        await current.dispose().catch(() => undefined);
+        if (stable) {
+          return candidate;
+        }
+      }
+    } catch {
+      // Sem evento de clique nesta fase; uma nova resolução estrutural é segura.
+    }
+    await candidate.dispose().catch(() => undefined);
+    if (attempt < attempts) {
+      await page.waitForTimeout(200);
+    }
+  }
+  return null;
 }
 
 async function clickRecordSnapshot(
@@ -145,10 +180,6 @@ async function readConfirmation(
   expectedUsername: string | undefined,
 ): Promise<ConfirmationRead> {
   try {
-    const visibleText = await page
-      .locator('body')
-      .innerText()
-      .catch(() => '');
     const signals = await readProfileSignals(page, readOptions);
     const assessment = assessProfile(signals);
     if (assessment.safetyState !== 'SAFE') {
@@ -160,9 +191,6 @@ async function readConfirmation(
         canonicalUsername(signals.usernameShown) !== canonicalUsername(expectedUsername))
     ) {
       return { relationship: 'UNKNOWN', terminal: true };
-    }
-    if (PROFILE_LOAD_ERROR_TEXT.test(visibleText)) {
-      return { relationship: 'UNKNOWN', terminal: false };
     }
     const relationship = assessment.relationshipState;
     return {
@@ -213,14 +241,22 @@ async function confirmAfterReadOnlyReload(
   readOptions: ReadSignalsOptions | undefined,
   expectedUsername: string | undefined,
 ): Promise<ObservedRelationship> {
+  const network = expectedUsername
+    ? observePositiveProfileRelationship(page, expectedUsername)
+    : null;
   try {
     await page.reload({ waitUntil: 'domcontentloaded', timeout: 10_000 });
     await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => undefined);
     await page.waitForTimeout(600);
-    return (await waitForStableConfirmation(page, readOptions, expectedUsername, 2000))
-      .relationship;
+    const visual = await waitForStableConfirmation(page, readOptions, expectedUsername, 2000);
+    if (visual.relationship !== 'UNKNOWN' || visual.terminal) {
+      return visual.relationship;
+    }
+    return (await network?.waitFor(500)) ?? 'UNKNOWN';
   } catch {
     return 'UNKNOWN';
+  } finally {
+    network?.dispose();
   }
 }
 
@@ -228,28 +264,12 @@ async function clickPrimaryFollow(
   page: Page,
   expectedUsername?: string,
 ): Promise<ClickFollowResult> {
-  let button: RelationshipButtonHandle | null = null;
-  try {
-    const control = await resolvePrimaryRelationshipControl(page, expectedUsername);
-    if (!control || control.state !== 'FOLLOW' || !(await control.locator.isEnabled())) {
-      return { clicked: false };
-    }
-    // Fixa o mesmo nó: um Locator poderia ser resolvido novamente para um card de
-    // sugestão se o React alterasse o header entre o trial e o clique real.
-    button = await control.locator.elementHandle();
-    if (!button) {
-      return { clicked: false };
-    }
-    // O trial reexecuta as verificações de acionabilidade sem despachar o clique.
-    // Qualquer detach/instabilidade nesta fase é seguro para virar SKIP.
-    await button.click({ trial: true, timeout: 1500 });
-    if (!(await remainsTheSamePrimaryControl(page, button, expectedUsername))) {
-      await button.dispose().catch(() => undefined);
-      return { clicked: false };
-    }
-  } catch {
-    await button?.dispose().catch(() => undefined);
-    return { clicked: false };
+  const button = await preparePrimaryFollowButton(page, expectedUsername);
+  if (!button) {
+    return {
+      clicked: false,
+      notClickedReason: 'botão principal permaneceu ausente ou instável antes do clique',
+    };
   }
 
   let clickRecord: JSHandle<FollowClickRecord> | undefined;
@@ -257,16 +277,24 @@ async function clickPrimaryFollow(
     clickRecord = await installFollowClickRecord(button);
   } catch {
     await button.dispose().catch(() => undefined);
-    return { clicked: false };
+    return {
+      clicked: false,
+      notClickedReason: 'não foi possível instalar a guarda imediatamente antes do clique',
+    };
   }
   try {
-    await button.click({ timeout: 1500 });
+    await button.click({ timeout: 4000 });
     return { clicked: true };
   } catch {
     const dispatched = await clickRecordSnapshot(clickRecord);
     // Se o contexto sumiu durante o clique, o resultado é incerto. Tratamos como
     // possível clique para que a confirmação falhe fechada e pare sem repetir.
-    return { clicked: dispatched !== false };
+    return dispatched === false
+      ? {
+          clicked: false,
+          notClickedReason: 'botão principal não ficou acionável no clique final',
+        }
+      : { clicked: true };
   } finally {
     await closeClickRecord(clickRecord);
     await button.dispose().catch(() => undefined);
@@ -316,7 +344,8 @@ export async function performFollow(
     return {
       clicked: false,
       relationship: 'UNKNOWN',
-      notClickedReason: 'botão desapareceu na verificação final antes do clique',
+      notClickedReason:
+        click.notClickedReason ?? 'botão principal indisponível na verificação final',
     };
   }
   const confirmation = await waitForStableConfirmation(

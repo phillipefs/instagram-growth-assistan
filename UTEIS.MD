@@ -104,11 +104,20 @@ Criar um plano com até 50 candidatos nunca tentados:
 npm run dev -- plan:create-follow --campaign "professor_vicente" --only-unattempted --limit 50 --account "appassetlens"
 ```
 
+Criar um plano somente com usernames exatos:
+
+```bash
+npm run dev -- plan:create-follow --campaign "neto_invest" --usernames "usuario1,usuario2"
+```
+
 Copie o `planId` retornado e execute:
 
 ```bash
 npm run dev -- follow --plan "<PLAN_ID>" --mode supervised-batch --limit 50 --account "appassetlens"
 ```
+
+Para execução não interativa já autorizada, acrescente `--yes`. Plano congelado,
+modo real e limite positivo continuam obrigatórios.
 
 Opcionalmente, pular perfis com menos de 20 seguidores:
 
@@ -122,14 +131,28 @@ pulado sem clique; o lote continua.
 Antes da ação, o botão `Seguir` é vinculado ao username e ao bloco de
 estatísticas do alvo. Botões de `Sugestões para você` são ignorados mesmo dentro do
 mesmo header. Ausência, duplicidade, instabilidade ou `Falha no carregamento`
-pulam o item sem clique. A confirmação precisa permanecer estável em duas leituras.
+do próprio cabeçalho pulam o item sem clique. Uma falha apenas na grade de posts
+não invalida um botão principal reconhecido. A confirmação precisa permanecer estável em duas leituras.
+Uma substituição técnica do nó pelo React é aceita somente se o novo botão continuar
+estruturalmente ligado ao mesmo perfil. Estados provisórios de carregamento recebem
+algumas releituras somente leitura antes de virar `UNKNOWN_INTERFACE`.
 Não há segunda abertura no fluxo normal; uma recarga somente leitura ocorre apenas
-se o clique foi despachado e a confirmação visual sumiu. Um resultado que continuar
+se o clique foi despachado e a confirmação visual sumiu. Nessa exceção, respostas
+do perfil também podem confirmar `friendship_status` para o username exato. Um resultado que continuar
 desconhecido interrompe o lote por segurança.
 
 ## 6. Continuar depois de um follow ambíguo
 
 Use o `runId` e o username mostrados na execução:
+
+Se uma leitura posterior visual ou o `friendship_status` do username exato mostrar
+`Seguindo`/`Solicitado`, confirme sem reclicar:
+
+```bash
+npm run dev -- follow:confirm-ambiguous --run "<RUN_ID>" --username "<USERNAME>" --confirm
+```
+
+Se o resultado continuar desconhecido, apenas libere o item sem repetir:
 
 ```bash
 npm run dev -- follow:skip-ambiguous --run "<RUN_ID>" --username "<USERNAME>" --confirm

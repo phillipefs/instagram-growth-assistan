@@ -55,4 +55,9 @@ describe('buildFollowPreview', () => {
     expect(preview.totalProposed).toBe(0);
     expect(preview.excluded.previously_attempted).toBe(1);
   });
+
+  it('restringe a usernames explicitamente selecionados', () => {
+    const preview = buildFollowPreview(candidates, { usernames: ['@liker', 'follower'] });
+    expect(preview.proposed.map((p) => p.username)).toEqual(['liker', 'follower']);
+  });
 });

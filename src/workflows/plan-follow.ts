@@ -21,6 +21,8 @@ export type ExclusionReason =
 export interface FollowPreviewOptions {
   readonly limit?: number;
   readonly onlyUnattempted?: boolean;
+  /** Restringe o plano a usernames explicitamente informados. */
+  readonly usernames?: readonly string[];
 }
 
 export interface FollowPreview {
@@ -43,8 +45,12 @@ export function selectApprovedFollowCandidates(
   candidates: readonly PlanCandidate[],
   options: FollowPreviewOptions = {},
 ): PlanCandidate[] {
+  const requested = options.usernames
+    ? new Set(options.usernames.map((username) => username.trim().replace(/^@/, '').toLowerCase()))
+    : null;
   const approved = candidates.filter(
     (c) =>
+      (!requested || requested.has(c.username.trim().replace(/^@/, '').toLowerCase())) &&
       !c.whitelisted &&
       !c.protected &&
       !c.alreadyFollowing &&
@@ -193,6 +199,7 @@ export interface FreezeFollowPlanInput {
   readonly localAccountId: string;
   readonly limit?: number;
   readonly onlyUnattempted?: boolean;
+  readonly usernames?: readonly string[];
   readonly configHashInput?: unknown;
 }
 
@@ -213,7 +220,23 @@ export function freezeFollowPlan(
   const approved = selectApprovedFollowCandidates(candidates, {
     ...(input.limit ? { limit: input.limit } : {}),
     ...(input.onlyUnattempted ? { onlyUnattempted: true } : {}),
+    ...(input.usernames ? { usernames: input.usernames } : {}),
   });
+
+  if (input.usernames) {
+    const requested = new Set(
+      input.usernames.map((username) => username.trim().replace(/^@/, '').toLowerCase()),
+    );
+    const selected = new Set(
+      approved.map((candidate) => candidate.username.trim().replace(/^@/, '').toLowerCase()),
+    );
+    const unavailable = [...requested].filter((username) => !selected.has(username));
+    if (unavailable.length > 0) {
+      throw new Error(
+        `Username(s) inexistente(s) ou inelegível(is) nesta campanha: ${unavailable.join(', ')}`,
+      );
+    }
+  }
 
   const plans = new PlanRepo(db);
   const plan = plans.create({

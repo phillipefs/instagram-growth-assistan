@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Command } from 'commander';
 import { BrowserSession } from '../../browser/browser-session.js';
-import { readProfileSignals } from '../../browser/read-profile.js';
+import { readSettledProfileSignals } from '../../browser/read-profile.js';
 import { assessProfile } from '../../browser/profile-detector.js';
 import { performFollow } from '../../browser/follow-action.js';
 import { readPageSafety } from '../../browser/read-signals.js';
@@ -29,7 +29,7 @@ import {
   type FollowItem,
 } from '../../workflows/follow.js';
 import type { LikeAfterFollowDriver, OpenedPost } from '../../workflows/like.js';
-import { NOOP_CONFIRMER, StdinConfirmer } from './stdin-confirmer.js';
+import { NOOP_CONFIRMER, StdinConfirmer, YES_CONFIRMER } from './stdin-confirmer.js';
 
 function write(payload: unknown): void {
   process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
@@ -54,7 +54,7 @@ class PlaywrightFollowDriver implements FollowDriver {
   async inspect(profileUrl: string): Promise<FollowInspection> {
     await this.session.goto(profileUrl);
     const page = this.session.activePage;
-    const assessment = assessProfile(await readProfileSignals(page));
+    const assessment = assessProfile(await readSettledProfileSignals(page));
     return {
       safetyState: assessment.safetyState,
       relationship: assessment.relationshipState,
@@ -133,6 +133,7 @@ export function registerFollowCommands(program: Command): void {
       'pula perfis com menos de N seguidores; contador desconhecido não recebe clique',
     )
     .option('--like', 'ao seguir um perfil ABERTO, curte 1 publicação recente')
+    .option('--yes', 'confirma os prompts sem entrada interativa')
     .action(
       async (options: {
         plan?: string;
@@ -142,6 +143,7 @@ export function registerFollowCommands(program: Command): void {
         account?: string;
         skipInactive?: string;
         like?: boolean;
+        yes?: boolean;
       }) => {
         const parsedMode = executionModeSchema.safeParse(options.mode);
         if (!parsedMode.success) {
@@ -156,6 +158,12 @@ export function registerFollowCommands(program: Command): void {
           ? Number.parseInt(options.skipInactive, 10) || 0
           : config.follow.skipInactiveBelow;
         const likeAfterFollow = options.like === true;
+
+        if (options.yes && mode === 'manual') {
+          write({ error: '--yes não é compatível com --mode manual.' });
+          process.exitCode = 1;
+          return;
+        }
 
         const db = openAppDatabase();
         try {
@@ -274,13 +282,17 @@ export function registerFollowCommands(program: Command): void {
           });
           runs.start(run.id);
 
-          const session = await BrowserSession.open({ visible: true });
-          const confirmer = new StdinConfirmer();
+          const stdinConfirmer = options.yes ? null : new StdinConfirmer();
+          const confirmer = options.yes ? YES_CONFIRMER : stdinConfirmer!;
+          let session: BrowserSession | null = null;
+          let runFinalized = false;
           try {
+            session = await BrowserSession.open({ visible: true });
             await session.goto();
             const report = await session.assess(account.username);
             if (report.assessment.safetyState !== 'SAFE') {
               runs.finish(run.id, 'FAILED', 'sessão não segura');
+              runFinalized = true;
               write({
                 ok: false,
                 runId: run.id,
@@ -292,6 +304,7 @@ export function registerFollowCommands(program: Command): void {
             }
             if (report.assessment.sessionStatus !== 'authenticated') {
               runs.finish(run.id, 'FAILED', 'sessão não autenticada');
+              runFinalized = true;
               write({
                 ok: false,
                 runId: run.id,
@@ -330,10 +343,17 @@ export function registerFollowCommands(program: Command): void {
               summary.stopped ? 'STOPPED' : 'COMPLETED',
               summary.stopReason ?? undefined,
             );
+            runFinalized = true;
             write({ ...summary, runId: run.id });
+          } catch (error) {
+            if (!runFinalized) {
+              const detail = error instanceof Error ? error.message : String(error);
+              runs.finish(run.id, 'FAILED', `erro inesperado: ${detail}`);
+            }
+            throw error;
           } finally {
-            confirmer.close();
-            await session.close().catch(() => undefined);
+            stdinConfirmer?.close();
+            await session?.close().catch(() => undefined);
           }
         } finally {
           db.close();

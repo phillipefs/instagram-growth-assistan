@@ -490,12 +490,16 @@ Cria um plano fixo (FROZEN) com os candidatos. É esse plano que você executa
 depois, em fatias, ao longo dos dias.
 
 - `--limit`: limita quantos itens entram no plano.
+- `--usernames`: restringe a usernames exatos separados por vírgula; o comando
+  falha se algum estiver ausente ou inelegível, sem substituí-lo por outro candidato.
 
 ```bash
 # genérico
 npm run dev -- plan:create-follow --campaign "<nome>" --limit <n>
 # exemplo real
 npm run dev -- plan:create-follow --campaign "Teste" --limit 10
+# repetição seletiva de perfis comprovadamente sem clique
+npm run dev -- plan:create-follow --campaign "Teste" --usernames "usuario1,usuario2"
 ```
 
 **Saída (exemplo):** guarde o `planId` — você vai usá-lo no `follow`.
@@ -531,18 +535,22 @@ Imediatamente antes de cada follow, a ferramenta faz duas verificações curtas 
 página já aberta. O botão principal `Seguir` precisa estar estruturalmente ligado
 ao mesmo username e ao bloco de estatísticas do perfil. Botões de `Sugestões para
 você` são excluídos mesmo quando o Instagram os coloca dentro do mesmo `header`.
-Se o controle não existir, estiver duplicado, mudar entre as leituras, ficar
-invisível/desabilitado ou a página exibir `Falha no carregamento`, o item é
-registrado como `SKIPPED` sem clique e o lote continua.
+Se o controle não existir, estiver duplicado, mudar entre as leituras ou ficar
+invisível/desabilitado, o item é registrado como `SKIPPED` sem clique e o lote
+continua. Uma `Falha no carregamento` restrita à grade de posts não invalida um
+cabeçalho reconhecido com botão principal válido.
 
-O trial e o clique usam o mesmo nó DOM, impedindo que uma mutação do React troque
-o alvo por um cartão sugerido. Um marcador instalado antes da ação distingue uma
+O trial e o clique usam um controle estruturalmente ligado ao alvo. Se o React
+substituir o nó antes do clique, o novo nó só é aceito depois de nova resolução
+estrutural; cartões sugeridos continuam excluídos. Um marcador distingue uma
 falha anterior ao clique (skip) de um clique possivelmente despachado. A confirmação
 só é aceita quando o controle primário ligado ao alvo mostra `Seguindo` ou
 `Solicitado` em duas leituras consecutivas; uma mudança transitória não basta.
 A segunda abertura não ocorre no caminho normal: existe somente uma recarga de
 leitura excepcional se um clique foi despachado e nenhuma confirmação permaneceu
-visível. Se essa verificação também ficar desconhecida, a ação é ambígua e a
+visível. Nessa recarga excepcional, uma resposta do próprio perfil com
+`friendship_status.following` ou solicitação enviada também confirma a ação,
+sempre correlacionada ao username exato. Se essa verificação também ficar desconhecida, a ação é ambígua e a
 execução para para revisão.
 
 ```bash
@@ -554,6 +562,8 @@ npm run dev -- follow --plan a7d32aec-0852-453d-aeae-922cb30f2371 --mode supervi
 npm run dev -- follow --plan <id> --mode supervised-batch --limit 20 --skip-inactive 20
 # seguir E curtir 1 post dos perfis abertos, pulando inativos
 npm run dev -- follow --plan <id> --mode supervised-batch --limit 20 --skip-inactive 20 --like
+# confirmação não interativa já autorizada
+npm run dev -- follow --plan <id> --mode supervised-batch --limit 20 --yes
 ```
 
 **Saída (exemplo):**
@@ -788,20 +798,26 @@ ferramenta falha "fechada" (na dúvida, não age).
 
 - **`resultado ambíguo; revisão manual necessária`**
   A ferramenta clicou mas **não conseguiu confirmar** visualmente o resultado.
-  O lote para por segurança. Verifique manualmente no navegador se a ação
-  aconteceu. Se quiser deixar esse perfil sem nova tentativa e processar os
-  demais, registre a decisão explicitamente:
+  O lote para por segurança. Faça uma leitura posterior. Se a interface ou o
+  `friendship_status` correlacionado ao username exato comprovar `Seguindo` ou
+  `Solicitado`, reconcilie sem novo clique:
+  ```bash
+  npm run dev -- follow:confirm-ambiguous --run <RUN_ID> --username <USERNAME> --confirm
+  ```
+  Se o estado continuar desconhecido e você quiser apenas liberar os demais:
   ```bash
   npm run dev -- follow:skip-ambiguous --run <RUN_ID> --username <USERNAME> --confirm
   ```
-  A tentativa original continua ambígua e nenhum ciclo de follow é criado para
-  ela. Depois, reexecute o mesmo plano com um limite positivo.
+  No caminho `skip`, a tentativa original continua ambígua e nenhum ciclo de
+  follow é criado. No caminho `confirm`, a tentativa e o ciclo `TOOL_CLICK` são
+  atualizados pela observação. Depois, reexecute o mesmo plano com limite positivo.
 
 - **`ação anterior não confirmada; reconcilie antes de prosseguir`**
   Existe uma tentativa anterior **ambígua/pendente** para aquele item, que
   bloqueia repetir o **mesmo** plano. Para um follow ambíguo, use
-  `follow:skip-ambiguous` somente após revisão manual. O comando nunca repete o
-  clique e exige `--confirm`.
+  `follow:confirm-ambiguous` quando a leitura comprovar o relacionamento, ou
+  `follow:skip-ambiguous` após revisão manual. Nenhum comando repete o clique e
+  ambos exigem `--confirm`.
 
 - **`WARNING_DETECTED` / `CHALLENGE_DETECTED` / `CAPTCHA_DETECTED`**
   O Instagram sinalizou a conta (aviso, desafio ou CAPTCHA). A ferramenta **para

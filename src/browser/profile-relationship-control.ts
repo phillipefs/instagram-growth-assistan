@@ -42,28 +42,27 @@ async function belongsToPrimaryProfileArea(
   candidate: Locator,
   expectedUsername: string,
 ): Promise<boolean> {
+  // Esta callback é serializada pelo Playwright e executada na página. Evite
+  // helpers locais nomeados: o `tsx` pode reescrevê-los para `__name`, que não
+  // existe no contexto do navegador.
   return candidate.evaluate(
     (button, input) => {
-      const normalize = (value: string): string => value.trim().replace(/^@/, '').toLowerCase();
       const header = button.closest('header');
       if (!header) {
         return false;
       }
       const view = button.ownerDocument.defaultView;
-      const isVisible = (node: typeof button): boolean => {
+      const usernameNodes = (
+        Array.from(header.querySelectorAll(input.usernameSelector)) as Array<typeof button>
+      ).filter((node) => {
         const style = view?.getComputedStyle(node);
         return (
           node.getClientRects().length > 0 &&
           style?.display !== 'none' &&
-          style?.visibility !== 'hidden'
+          style?.visibility !== 'hidden' &&
+          (node.textContent ?? '').trim().replace(/^@/, '').toLowerCase() === input.expectedUsername
         );
-      };
-
-      const usernameNodes = (
-        Array.from(header.querySelectorAll(input.usernameSelector)) as Array<typeof button>
-      ).filter(
-        (node) => isVisible(node) && normalize(node.textContent ?? '') === input.expectedUsername,
-      );
+      });
       if (usernameNodes.length !== 1) {
         return false;
       }
@@ -75,9 +74,12 @@ async function belongsToPrimaryProfileArea(
       const afterSuggestions = (
         Array.from(header.querySelectorAll('*')) as Array<typeof button>
       ).some((node) => {
+        const style = view?.getComputedStyle(node);
         const exactText = (node.textContent ?? '').trim().replace(/\s+/g, ' ');
         return (
-          isVisible(node) &&
+          node.getClientRects().length > 0 &&
+          style?.display !== 'none' &&
+          style?.visibility !== 'hidden' &&
           suggestions.test(exactText) &&
           (node.compareDocumentPosition(button) & 4) !== 0
         );
@@ -108,7 +110,9 @@ async function belongsToPrimaryProfileArea(
           }
           const segments = path.split('/').filter(Boolean);
           if (segments.length === 1) {
-            linkedUsernames.add(normalize(decodeURIComponent(segments[0]!)));
+            linkedUsernames.add(
+              decodeURIComponent(segments[0]!).trim().replace(/^@/, '').toLowerCase(),
+            );
           }
         }
         if (linkedUsernames.size === 1) {
@@ -123,15 +127,20 @@ async function belongsToPrimaryProfileArea(
       // Defesa 3: limita ao menor ancestral do username que também contém
       // as estatísticas do perfil. Destaques e sugestões ficam fora desse bloco.
       let profileArea = usernameNode.parentElement;
-      while (profileArea && profileArea !== header) {
+      while (profileArea) {
         const text = (profileArea.textContent ?? '').replace(/\s+/g, ' ');
-        const hasPosts = /\b(posts?|publica(?:ções|coes))\b/i.test(text);
-        const hasFollowers = /\b(followers?|seguidores?)\b/i.test(text);
-        const hasFollowing = /\b(following|seguindo)\b/i.test(text);
+        // `textContent` do Instagram concatena spans adjacentes sem espaço
+        // (ex.: "9 posts122 seguidores864 seguindo"). Não use `\b` aqui.
+        const hasPosts = /(posts?|publica(?:ções|coes))/i.test(text);
+        const hasFollowers = /(followers?|seguidores?)/i.test(text);
+        const hasFollowing = /(following|seguindo)/i.test(text);
         if (hasPosts && hasFollowers && hasFollowing) {
           if (profileArea.contains(button)) {
             return true;
           }
+        }
+        if (profileArea === header) {
+          break;
         }
         profileArea = profileArea.parentElement;
       }
