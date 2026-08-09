@@ -527,6 +527,15 @@ um `--mode` real e um `--limit` positivo.
   solicitação e **não** são curtidos (você nem vê os posts). No progresso aparece
   uma linha `↳ like @fulano: LIKED`. O total curtido vem em `liked` na saída.
 
+Imediatamente antes de cada follow, a ferramenta faz duas leituras técnicas do
+botão principal `Seguir` dentro do cabeçalho e confere se o username visível é o
+mesmo item do plano. Se o botão não existir, mudar entre as leituras, estiver
+invisível/desabilitado, houver mais de um candidato ou o cabeçalho ainda for do
+perfil anterior, o item é registrado como `SKIPPED` sem clique e o lote continua.
+Botões `Seguir` de sugestões fora do cabeçalho nunca são usados. Se o clique
+ocorrer e o resultado posterior continuar desconhecido, a ação ainda é ambígua
+e a execução para para revisão.
+
 ```bash
 # genérico
 npm run dev -- follow --plan <id> --mode <modo> --limit <n>

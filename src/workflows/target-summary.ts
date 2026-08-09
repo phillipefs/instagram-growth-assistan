@@ -36,7 +36,7 @@ export function buildTargetSummary(db: SqliteDatabase, target: Profile): TargetS
       `SELECT name, status
          FROM campaigns
         WHERE target_profile_id = ?
-        ORDER BY created_at, id`,
+        ORDER BY created_at, name, id`,
     )
     .all(target.id) as { name: string; status: string }[];
 

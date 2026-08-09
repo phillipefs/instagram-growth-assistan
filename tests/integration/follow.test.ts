@@ -8,6 +8,7 @@ import { ProfileRepo } from '../../src/database/repositories/profiles.js';
 import { RelationshipRepo } from '../../src/database/repositories/relationships.js';
 import { ActionAttemptRepo } from '../../src/database/repositories/actions.js';
 import type { ObservedRelationship } from '../../src/browser/profile-detector.js';
+import type { PerformFollowResult } from '../../src/browser/follow-action.js';
 import type { SafetyState } from '../../src/domain/states.js';
 import {
   runFollow,
@@ -29,6 +30,7 @@ class FakeDriver implements FollowDriver {
     private readonly shot: string | null = null,
     private readonly followersCount: number | null = null,
     private readonly followingCount: number | null = null,
+    private readonly followButtonAvailable = true,
   ) {}
   inspect() {
     return Promise.resolve({
@@ -39,9 +41,12 @@ class FakeDriver implements FollowDriver {
       followingCount: this.followingCount,
     });
   }
-  performFollow() {
+  performFollow(_expectedUsername: string): Promise<PerformFollowResult> {
     this.followCalls += 1;
-    return Promise.resolve(this.followResult);
+    return Promise.resolve({
+      clicked: this.followButtonAvailable,
+      relationship: this.followButtonAvailable ? this.followResult : 'UNKNOWN',
+    });
   }
   screenshot() {
     return Promise.resolve(this.shot);
@@ -208,6 +213,32 @@ describe('runFollow', () => {
     const attempts = new ActionAttemptRepo(db).listByProfileId(items[0]!.profileId);
     expect(attempts[0]?.state).toBe('AMBIGUOUS');
     expect(attempts[0]?.screenshotPath).toBe('/evidence/follow-ambiguous.png');
+  });
+
+  it('pula sem interromper quando o botão some antes do clique', async () => {
+    const account = new LocalAccountRepo(db).create({ username: 'minha_conta' });
+    const driver = new FakeDriver(
+      'NOT_FOLLOWING',
+      'UNKNOWN',
+      'SAFE',
+      '/evidence/no-button.png',
+      500,
+      100,
+      false,
+    );
+    const summary = await runFollow(db, seedItems(['u1', 'u2']), driver, new FakeConfirmer(), {
+      mode: 'supervised-batch',
+      limit: 1,
+      ...baseOptions(account.id),
+    });
+    expect(summary.skipped).toBe(2);
+    expect(summary.ambiguous).toBe(0);
+    expect(summary.stopped).toBe(false);
+    const attempts = new ActionAttemptRepo(db).listByProfileId(
+      new ProfileRepo(db).findByUsername('u1')!.id,
+    );
+    expect(attempts[0]?.state).toBe('SKIPPED');
+    expect(attempts[0]?.result).toMatch(/nenhum clique/);
   });
 
   it('limite zero em modo real não executa nada', async () => {

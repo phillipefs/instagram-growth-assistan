@@ -19,11 +19,52 @@ test('um clique de seguir confirma FOLLOWING', async ({ page }) => {
   const before = assessProfile(await readProfileSignals(page, readOptions)).relationshipState;
   expect(before).toBe('NOT_FOLLOWING');
   const after = await performFollow(page, readOptions);
-  expect(after).toBe('FOLLOWING');
+  expect(after).toEqual({ clicked: true, relationship: 'FOLLOWING' });
 });
 
 test('conta privada resulta em solicitação enviada', async ({ page }) => {
   await page.goto(fixtureUrl('follow_request.html'));
   const after = await performFollow(page, readOptions);
-  expect(after).toBe('FOLLOW_REQUESTED');
+  expect(after).toEqual({ clicked: true, relationship: 'FOLLOW_REQUESTED' });
+});
+
+test('não usa botão Seguir de sugestão quando o perfil não tem botão principal', async ({
+  page,
+}) => {
+  await page.setContent(`
+    <header><h2>alvo_sem_botao</h2><span>100 seguidores</span></header>
+    <main>
+      <button onclick="this.dataset.clicked='true'">Seguir</button>
+    </main>
+  `);
+  const before = assessProfile(await readProfileSignals(page, readOptions)).relationshipState;
+  expect(before).toBe('UNKNOWN');
+  const after = await performFollow(page, readOptions);
+  expect(after.clicked).toBe(false);
+  expect(after.relationship).toBe('UNKNOWN');
+  await expect(page.locator('main button')).not.toHaveAttribute('data-clicked', 'true');
+});
+
+test('não clica quando o cabeçalho pertence a outro username', async ({ page }) => {
+  await page.goto(fixtureUrl('follow_button.html'));
+  const result = await performFollow(page, readOptions, {
+    expectedUsername: 'outro_perfil',
+    stabilityDelayMs: 10,
+  });
+  expect(result.clicked).toBe(false);
+  expect(result.notClickedReason).toMatch(/diverge do esperado/);
+  await expect(page.getByTestId('follow-button')).toHaveAttribute('data-state', 'FOLLOW');
+});
+
+test('não clica quando o botão desaparece entre as duas leituras', async ({ page }) => {
+  await page.goto(fixtureUrl('follow_button.html'));
+  await page.evaluate(
+    `setTimeout(() => document.querySelector('[data-testid="follow-button"]')?.remove(), 500)`,
+  );
+  const result = await performFollow(page, readOptions, {
+    expectedUsername: 'alvo',
+    stabilityDelayMs: 1000,
+  });
+  expect(result.clicked).toBe(false);
+  expect(result.notClickedReason).toMatch(/validação instável/);
 });

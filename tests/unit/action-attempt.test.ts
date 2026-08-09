@@ -28,6 +28,12 @@ describe('máquina de tentativa de ação', () => {
     expect(attempt.state).toBe('AMBIGUOUS');
   });
 
+  it('permite PENDING → SKIPPED quando a guarda final impede o clique', () => {
+    const attempt = new ActionAttempt('PENDING');
+    attempt.transition('SKIPPED');
+    expect(attempt.isTerminal).toBe(true);
+  });
+
   it('rejeita transições inválidas', () => {
     const attempt = new ActionAttempt();
     expect(() => attempt.transition('CONFIRMED')).toThrow(InvalidActionTransitionError);

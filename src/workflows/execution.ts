@@ -13,7 +13,7 @@ export interface BatchItem {
   readonly mediaId?: string;
 }
 
-export type ExecuteResult = 'CONFIRMED' | 'AMBIGUOUS' | 'FAILED';
+export type ExecuteResult = 'CONFIRMED' | 'AMBIGUOUS' | 'FAILED' | 'SKIPPED';
 
 export interface BatchHooks {
   readonly evaluate: (item: BatchItem) => Promise<PreActionDecision> | PreActionDecision;
@@ -179,6 +179,14 @@ export async function runActionBatch(
     });
     summary.processed += 1;
 
+    if (res.result === 'SKIPPED') {
+      // A guarda no momento exato da ação constatou que não havia alvo clicável.
+      // Portanto não houve ação real e o item não consome o limite.
+      summary.proceeded -= 1;
+      summary.skipped += 1;
+      emit(item, 'SKIPPED');
+      continue;
+    }
     if (res.result === 'CONFIRMED') {
       summary.confirmed += 1;
       emit(item, 'CONFIRMED');

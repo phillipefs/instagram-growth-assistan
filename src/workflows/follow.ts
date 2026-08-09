@@ -2,6 +2,7 @@ import type { SqliteDatabase } from '../database/connection.js';
 import type { SafetyState } from '../domain/states.js';
 import type { ExecutionMode } from '../config/schema.js';
 import type { ObservedRelationship } from '../browser/profile-detector.js';
+import type { PerformFollowResult } from '../browser/follow-action.js';
 import { canonicalUsername } from '../database/util.js';
 import { RelationshipRepo } from '../database/repositories/relationships.js';
 import { ActionAttemptRepo } from '../database/repositories/actions.js';
@@ -32,7 +33,7 @@ export interface FollowInspection {
 
 export interface FollowDriver {
   inspect(profileUrl: string): Promise<FollowInspection>;
-  performFollow(): Promise<ObservedRelationship>;
+  performFollow(expectedUsername: string): Promise<PerformFollowResult>;
   screenshot(label: string): Promise<string | null>;
 }
 
@@ -225,9 +226,9 @@ export async function runFollow(
       execute: async (bi) => {
         const item = getItem(bi.profileId);
         const before = observed.get(bi.profileId) ?? 'UNKNOWN';
-        let after: ObservedRelationship;
+        let performed: PerformFollowResult;
         try {
-          after = await driver.performFollow();
+          performed = await driver.performFollow(item.username);
         } catch (error) {
           const shot = await driver.screenshot(`follow-failed-${item.username}`);
           return {
@@ -236,6 +237,15 @@ export async function runFollow(
             ...(shot ? { screenshotPath: shot } : {}),
           };
         }
+        if (!performed.clicked) {
+          const shot = await driver.screenshot(`follow-skipped-no-button-${item.username}`);
+          return {
+            result: 'SKIPPED',
+            detail: `${performed.notClickedReason ?? 'botão principal Seguir ausente no momento da ação'}; nenhum clique realizado`,
+            ...(shot ? { screenshotPath: shot } : {}),
+          };
+        }
+        const after = performed.relationship;
         const interpreted = interpretFollowResult(before, after);
         if (interpreted.result !== 'CONFIRMED') {
           const shot = await driver.screenshot(`follow-ambiguous-${item.username}`);

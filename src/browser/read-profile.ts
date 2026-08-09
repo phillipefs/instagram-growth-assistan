@@ -65,9 +65,12 @@ async function readFollowButtonState(page: Page): Promise<FollowButtonState | nu
       return attr;
     }
   }
-  // Escopo no header do perfil evita casar botões "Follow" das sugestões que
-  // surgem após seguir. Cai para a página inteira se não houver header.
-  const scope = (await page.locator('header').count()) > 0 ? page.locator('header') : page;
+  // Nunca cai para a página inteira: botões "Follow" de sugestões não podem
+  // representar o relacionamento com o perfil aberto.
+  const scope = page.locator(profileLocators.profileHeader).first();
+  if ((await scope.count()) === 0) {
+    return null;
+  }
   for (const state of FOLLOW_STATES) {
     if ((await scope.getByRole('button', { name: FOLLOW_BUTTON_TEXT[state] }).count()) > 0) {
       return state;

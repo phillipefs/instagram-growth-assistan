@@ -2,7 +2,7 @@ import type { ActionState } from './states.js';
 
 const TRANSITIONS: Record<ActionState, readonly ActionState[]> = {
   PREPARED: ['PENDING', 'SKIPPED', 'FAILED'],
-  PENDING: ['CONFIRMED', 'AMBIGUOUS', 'FAILED'],
+  PENDING: ['CONFIRMED', 'AMBIGUOUS', 'FAILED', 'SKIPPED'],
   CONFIRMED: [],
   AMBIGUOUS: [],
   FAILED: [],
@@ -37,6 +37,7 @@ export function assertActionTransition(from: ActionState, to: ActionState): void
  *
  * A intenção (`PREPARED`/`PENDING`) é registrada antes da interação; o resultado
  * observado (`CONFIRMED`/`AMBIGUOUS`/`FAILED`/`SKIPPED`) é registrado depois.
+ * `PENDING → SKIPPED` representa a guarda final que abortou antes do clique.
  */
 export class ActionAttempt {
   private current: ActionState;

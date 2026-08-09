@@ -5,6 +5,7 @@
  * `data-testid` permitem fixtures determinísticas sem depender do DOM real.
  */
 export const profileLocators = {
+  profileHeader: 'header:has(h1), header:has(h2), header:has([data-testid="profile-username"])',
   username: '[data-testid="profile-username"], header h2, header h1',
   followButton: '[data-testid="follow-button"]',
   followersLink: 'a[href$="/followers/"]',

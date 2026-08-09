@@ -119,8 +119,11 @@ npm run dev -- follow --plan "<PLAN_ID>" --mode supervised-batch --limit 50 --sk
 Se o número de seguidores não puder ser lido, o perfil é enviado para revisão e
 pulado sem clique; o lote continua.
 
-Perfis sem botão/estado reconhecível antes do clique são pulados sem ação. Um
-resultado não confirmado depois do clique interrompe o lote por segurança.
+O botão principal `Seguir` é validado duas vezes no cabeçalho imediatamente antes
+da ação, junto com o username esperado. Se estiver ausente, instável, invisível,
+desabilitado ou o cabeçalho ainda pertencer ao perfil anterior, o item é pulado
+sem clique e o lote continua. Botões de sugestões fora do cabeçalho são ignorados.
+Um resultado não confirmado depois de um clique real interrompe o lote por segurança.
 
 ## 6. Continuar depois de um follow ambíguo
 

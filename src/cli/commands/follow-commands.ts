@@ -64,8 +64,8 @@ class PlaywrightFollowDriver implements FollowDriver {
     };
   }
 
-  performFollow() {
-    return performFollow(this.session.activePage);
+  performFollow(expectedUsername: string) {
+    return performFollow(this.session.activePage, undefined, { expectedUsername });
   }
 
   async screenshot(label: string): Promise<string | null> {
