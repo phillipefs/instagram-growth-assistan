@@ -110,11 +110,14 @@ Copie o `planId` retornado e execute:
 npm run dev -- follow --plan "<PLAN_ID>" --mode supervised-batch --limit 50 --account "appassetlens"
 ```
 
-Opcionalmente, pular perfis com poucos seguidores **e** poucos seguindo:
+Opcionalmente, pular perfis com menos de 20 seguidores:
 
 ```bash
 npm run dev -- follow --plan "<PLAN_ID>" --mode supervised-batch --limit 50 --skip-inactive 20 --account "appassetlens"
 ```
+
+Se o número de seguidores não puder ser lido, o perfil é enviado para revisão e
+pulado sem clique; o lote continua.
 
 Perfis sem botão/estado reconhecível antes do clique são pulados sem ação. Um
 resultado não confirmado depois do clique interrompe o lote por segurança.

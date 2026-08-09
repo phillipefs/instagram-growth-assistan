@@ -518,9 +518,10 @@ um `--mode` real e um `--limit` positivo.
 - `--limit` (padrão 0): teto de **ações reais** (quem já é seguido é pulado sem
   gastar o limite).
 - `--skip-inactive <n>`: **filtro de qualidade** — pula perfis com **menos de N
-  seguidores E menos de N seguindo** (contas vazias/bot). Ex.: `--skip-inactive 20`
-  ignora quem tem menos de 20 seguidores e menos de 20 seguindo. Se algum contador
-  não puder ser lido, o perfil **não** é pulado (segue normalmente).
+  seguidores**. Ex.: `--skip-inactive 20` ignora quem tem de 0 a 19 seguidores,
+  independentemente de quantas pessoas segue. Se a quantidade de seguidores não
+  puder ser lida, o perfil vai para revisão e é pulado **sem clique**; o lote
+  continua.
 - `--like`: ao seguir um perfil **ABERTO**, também curte **1 publicação recente**
   na mesma passada (uma por pessoa por campanha). Perfis **fechados** viram
   solicitação e **não** são curtidos (você nem vê os posts). No progresso aparece
@@ -531,7 +532,7 @@ um `--mode` real e um `--limit` positivo.
 npm run dev -- follow --plan <id> --mode <modo> --limit <n>
 # exemplo real (segue 3 automaticamente, com 1 confirmação inicial)
 npm run dev -- follow --plan a7d32aec-0852-453d-aeae-922cb30f2371 --mode supervised-batch --limit 3
-# pulando perfis inativos (menos de 20 seguidores E menos de 20 seguindo)
+# pulando perfis com menos de 20 seguidores
 npm run dev -- follow --plan <id> --mode supervised-batch --limit 20 --skip-inactive 20
 # seguir E curtir 1 post dos perfis abertos, pulando inativos
 npm run dev -- follow --plan <id> --mode supervised-batch --limit 20 --skip-inactive 20 --like

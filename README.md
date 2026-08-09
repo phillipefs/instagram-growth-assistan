@@ -83,7 +83,7 @@ continua de onde parou (não há retomada automática).
 - **Unfollow por coorte** — por período (`--older-than`, `--from/--to`,
   `--calendar-month`), por campanha, ou tudo que a ferramenta seguiu.
 - **Filtro de qualidade** — `--skip-inactive N` pula perfis com menos de N
-  seguidores **e** menos de N seguindo (contas vazias/bot).
+  seguidores. Se a contagem estiver desconhecida, não há clique.
 - **Progresso em tempo real** — uma linha por item no lote (`[12/100] @fulano — confirmado ✓`).
 - **Segurança de falha fechada** — para em CAPTCHA, desafio, aviso, sessão
   expirada, troca de conta, interface desconhecida ou divergência.
@@ -176,7 +176,7 @@ Saída do progresso (no `stderr`):
 ```text
   [  1/150] @fulano — confirmado ✓  (ok: 1, pulados: 0)
     ↳ like @fulano: LIKED
-  [  2/150] @beltrano — pulado — perfil inativo: 2 seguidores, 0 seguindo
+  [  2/150] @beltrano — pulado — abaixo do mínimo: 2 seguidores (exigido 20)
   ...
 ```
 

@@ -10,7 +10,12 @@ import { z } from 'zod';
  *   revisada, confirmação única para iniciar a fatia, limite positivo
  *   obrigatório, navegador visível e parada fechada em qualquer divergência.
  */
-export const executionModeSchema = z.enum(['dry-run', 'manual', 'confirm-each', 'supervised-batch']);
+export const executionModeSchema = z.enum([
+  'dry-run',
+  'manual',
+  'confirm-each',
+  'supervised-batch',
+]);
 export type ExecutionMode = z.infer<typeof executionModeSchema>;
 
 export const configSchema = z.object({
@@ -45,9 +50,9 @@ export const configSchema = z.object({
   follow: z
     .object({
       /**
-       * Filtro de qualidade: pula um perfil quando ele tem MENOS de N seguidores
-       * E está seguindo MENOS de N perfis (contas vazias/inativas). Zero desliga
-       * o filtro. Pode ser sobrescrito por `--skip-inactive` no comando.
+       * Filtro de qualidade: pula um perfil quando ele tem MENOS de N seguidores.
+       * Se a contagem não puder ser lida, o perfil vai para revisão sem clique.
+       * Zero desliga o filtro. Pode ser sobrescrito por `--skip-inactive`.
        */
       skipInactiveBelow: z.number().int().min(0).default(0),
     })

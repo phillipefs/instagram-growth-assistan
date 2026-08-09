@@ -9,7 +9,12 @@ import { RelationshipRepo } from '../../src/database/repositories/relationships.
 import { ActionAttemptRepo } from '../../src/database/repositories/actions.js';
 import type { ObservedRelationship } from '../../src/browser/profile-detector.js';
 import type { SafetyState } from '../../src/domain/states.js';
-import { runFollow, type Confirmer, type FollowDriver, type FollowItem } from '../../src/workflows/follow.js';
+import {
+  runFollow,
+  type Confirmer,
+  type FollowDriver,
+  type FollowItem,
+} from '../../src/workflows/follow.js';
 import type { LikeAfterFollowDriver, OpenedPost } from '../../src/workflows/like.js';
 import type { LikeState } from '../../src/workflows/like-result.js';
 
@@ -69,7 +74,11 @@ class FakeLikeDriver implements LikeAfterFollowDriver {
     return Promise.resolve([{ shortcode: 'POST1', positionIndex: 0 }]);
   }
   openPost(): Promise<OpenedPost> {
-    return Promise.resolve({ safetyState: 'SAFE', likeState: this.likeStateOnOpen, postUrl: 'file://p' });
+    return Promise.resolve({
+      safetyState: 'SAFE',
+      likeState: this.likeStateOnOpen,
+      postUrl: 'file://p',
+    });
   }
   performLike() {
     this.likeCalls += 1;
@@ -184,7 +193,12 @@ describe('runFollow', () => {
 
   it('captura evidência (screenshot) no resultado ambíguo', async () => {
     const account = new LocalAccountRepo(db).create({ username: 'minha_conta' });
-    const driver = new FakeDriver('NOT_FOLLOWING', 'NOT_FOLLOWING', 'SAFE', '/evidence/follow-ambiguous.png');
+    const driver = new FakeDriver(
+      'NOT_FOLLOWING',
+      'NOT_FOLLOWING',
+      'SAFE',
+      '/evidence/follow-ambiguous.png',
+    );
     const items = seedItems(['u1']);
     await runFollow(db, items, driver, new FakeConfirmer(), {
       mode: 'supervised-batch',
@@ -209,7 +223,7 @@ describe('runFollow', () => {
     expect(driver.followCalls).toBe(0);
   });
 
-  it('pula perfil inativo com skipInactiveBelow (poucos seguidores E seguindo)', async () => {
+  it('pula perfil abaixo do mínimo de seguidores', async () => {
     const account = new LocalAccountRepo(db).create({ username: 'minha_conta' });
     const driver = new FakeDriver('NOT_FOLLOWING', 'FOLLOWING', 'SAFE', null, 2, 0);
     const summary = await runFollow(db, seedItems(['u1']), driver, new FakeConfirmer(), {
@@ -235,7 +249,7 @@ describe('runFollow', () => {
     expect(summary.confirmed).toBe(1);
   });
 
-  it('não pula quando um dos contadores é desconhecido', async () => {
+  it('não clica quando a quantidade de seguidores é desconhecida', async () => {
     const account = new LocalAccountRepo(db).create({ username: 'minha_conta' });
     const driver = new FakeDriver('NOT_FOLLOWING', 'FOLLOWING', 'SAFE', null, null, 0);
     const summary = await runFollow(db, seedItems(['u1']), driver, new FakeConfirmer(), {
@@ -244,7 +258,23 @@ describe('runFollow', () => {
       ...baseOptions(account.id),
       skipInactiveBelow: 20,
     });
+    expect(summary.confirmed).toBe(0);
+    expect(summary.review).toBe(1);
+    expect(summary.stopped).toBe(false);
+    expect(driver.followCalls).toBe(0);
+  });
+
+  it('segue quando há seguidores suficientes, independentemente de quantos está seguindo', async () => {
+    const account = new LocalAccountRepo(db).create({ username: 'minha_conta' });
+    const driver = new FakeDriver('NOT_FOLLOWING', 'FOLLOWING', 'SAFE', null, 50, 0);
+    const summary = await runFollow(db, seedItems(['u1']), driver, new FakeConfirmer(), {
+      mode: 'supervised-batch',
+      limit: 5,
+      ...baseOptions(account.id),
+      skipInactiveBelow: 50,
+    });
     expect(summary.confirmed).toBe(1);
+    expect(driver.followCalls).toBe(1);
   });
 
   it('likeAfterFollow curte a publicação recente ao seguir perfil aberto', async () => {

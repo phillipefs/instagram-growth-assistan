@@ -51,7 +51,7 @@ export interface RunFollowOptions {
   readonly planFrozen: boolean;
   readonly runId?: string;
   readonly onProgress?: (progress: BatchProgress) => void;
-  /** Pula perfis com seguidores < N E seguindo < N. Zero desliga. */
+  /** Pula perfis com seguidores < N; contador desconhecido vai para revisão. Zero desliga. */
   readonly skipInactiveBelow?: number;
   /** Quando true, curte 1 publicação recente ao seguir um perfil ABERTO. */
   readonly likeAfterFollow?: boolean;
@@ -144,7 +144,11 @@ export async function runFollow(
       `Iniciar lote supervisionado de follow em ${items.length} conta(s) (limite ${options.limit}): ${list}?`,
     );
     if (!ok) {
-      return { ...zeroSummary('supervised-batch', items.length), stopped: true, stopReason: 'lote não confirmado' };
+      return {
+        ...zeroSummary('supervised-batch', items.length),
+        stopped: true,
+        stopReason: 'lote não confirmado',
+      };
     }
   }
 
@@ -196,17 +200,19 @@ export async function runFollow(
           return decision;
         }
         const threshold = options.skipInactiveBelow ?? 0;
-        if (
-          threshold > 0 &&
-          insp.followersCount != null &&
-          insp.followingCount != null &&
-          insp.followersCount < threshold &&
-          insp.followingCount < threshold
-        ) {
-          return {
-            outcome: 'SKIP',
-            reason: `perfil inativo: ${insp.followersCount} seguidores, ${insp.followingCount} seguindo`,
-          };
+        if (threshold > 0) {
+          if (insp.followersCount == null) {
+            return {
+              outcome: 'REVIEW',
+              reason: `quantidade de seguidores desconhecida; filtro mínimo de ${threshold} ativo`,
+            };
+          }
+          if (insp.followersCount < threshold) {
+            return {
+              outcome: 'SKIP',
+              reason: `abaixo do mínimo: ${insp.followersCount} seguidores (exigido ${threshold})`,
+            };
+          }
         }
         if (options.mode === 'confirm-each') {
           const ok = await confirmer.confirmItem(`Seguir @${item.username}? (${insp.finalUrl})`);
@@ -224,7 +230,11 @@ export async function runFollow(
           after = await driver.performFollow();
         } catch (error) {
           const shot = await driver.screenshot(`follow-failed-${item.username}`);
-          return { result: 'FAILED', detail: `erro ao seguir: ${String(error)}`, ...(shot ? { screenshotPath: shot } : {}) };
+          return {
+            result: 'FAILED',
+            detail: `erro ao seguir: ${String(error)}`,
+            ...(shot ? { screenshotPath: shot } : {}),
+          };
         }
         const interpreted = interpretFollowResult(before, after);
         if (interpreted.result !== 'CONFIRMED') {
@@ -252,7 +262,11 @@ export async function runFollow(
           options.onLike?.({ username: item.username, outcome });
         }
         const shot = await driver.screenshot(`follow-${item.username}`);
-        return { result: 'CONFIRMED', detail: interpreted.detail, ...(shot ? { screenshotPath: shot } : {}) };
+        return {
+          result: 'CONFIRMED',
+          detail: interpreted.detail,
+          ...(shot ? { screenshotPath: shot } : {}),
+        };
       },
     },
   );
