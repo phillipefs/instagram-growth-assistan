@@ -25,6 +25,9 @@ export interface CampaignFollowMetric {
   readonly name: string;
   readonly following: number;
   readonly requested: number;
+  readonly unfollowed: number;
+  readonly open: number;
+  /** Total histórico de ciclos, abertos e fechados. */
   readonly total: number;
 }
 
@@ -76,7 +79,9 @@ export function computeMetrics(db: SqliteDatabase): Metrics {
   }
 
   const actionRows = db
-    .prepare('SELECT action_type AS type, state, COUNT(*) AS n FROM action_attempts GROUP BY action_type, state')
+    .prepare(
+      'SELECT action_type AS type, state, COUNT(*) AS n FROM action_attempts GROUP BY action_type, state',
+    )
     .all() as { type: string; state: string; n: number }[];
   const actionMap = new Map<string, ActionMetric>();
   for (const row of actionRows) {
@@ -126,7 +131,9 @@ export function computeMetrics(db: SqliteDatabase): Metrics {
   }));
 
   const followBackRows = db
-    .prepare('SELECT follow_back AS fb, COUNT(*) AS n FROM relationship_cycles GROUP BY follow_back')
+    .prepare(
+      'SELECT follow_back AS fb, COUNT(*) AS n FROM relationship_cycles GROUP BY follow_back',
+    )
     .all() as { fb: string; n: number }[];
   const followBack: Record<string, number> = {};
   for (const row of followBackRows) {
@@ -137,7 +144,7 @@ export function computeMetrics(db: SqliteDatabase): Metrics {
   // FOLLOW_REQUESTED = solicitação enviada (perfil fechado).
   const openStateRows = db
     .prepare(
-      "SELECT state, COUNT(*) AS n FROM relationship_cycles WHERE unfollowed_at IS NULL GROUP BY state",
+      'SELECT state, COUNT(*) AS n FROM relationship_cycles WHERE unfollowed_at IS NULL GROUP BY state',
     )
     .all() as { state: string; n: number }[];
   const openFollowsByState: Record<string, number> = {};
@@ -145,36 +152,63 @@ export function computeMetrics(db: SqliteDatabase): Metrics {
     openFollowsByState[row.state] = row.n;
   }
 
-  // Follows abertos por campanha (FOLLOWING = aberto; FOLLOW_REQUESTED = solicitação).
+  // Histórico por campanha. Ciclos fechados continuam aparecendo após o unfollow.
   const campaignFollowRows = db
     .prepare(
-      `SELECT COALESCE(c.name, '(sem campanha)') AS name, rc.state AS state, COUNT(*) AS n
+      `SELECT COALESCE(c.name, '(sem campanha)') AS name, rc.state AS state,
+              CASE WHEN rc.unfollowed_at IS NULL THEN 0 ELSE 1 END AS closed,
+              COUNT(*) AS n
          FROM relationship_cycles rc
          LEFT JOIN campaigns c ON c.id = rc.campaign_id
-        WHERE rc.unfollowed_at IS NULL
-        GROUP BY name, rc.state
+        GROUP BY name, rc.state, closed
         ORDER BY name`,
     )
-    .all() as { name: string; state: string; n: number }[];
-  const campaignFollowMap = new Map<string, { following: number; requested: number; total: number }>();
+    .all() as { name: string; state: string; closed: number; n: number }[];
+  const campaignFollowMap = new Map<
+    string,
+    { following: number; requested: number; unfollowed: number; open: number; total: number }
+  >();
   for (const row of campaignFollowRows) {
-    const entry = campaignFollowMap.get(row.name) ?? { following: 0, requested: 0, total: 0 };
+    const entry = campaignFollowMap.get(row.name) ?? {
+      following: 0,
+      requested: 0,
+      unfollowed: 0,
+      open: 0,
+      total: 0,
+    };
     entry.total += row.n;
-    if (row.state === 'FOLLOWING') {
-      entry.following += row.n;
-    } else if (row.state === 'FOLLOW_REQUESTED') {
-      entry.requested += row.n;
+    if (row.closed === 1) {
+      entry.unfollowed += row.n;
+    } else {
+      entry.open += row.n;
+      if (row.state === 'FOLLOWING') {
+        entry.following += row.n;
+      } else if (row.state === 'FOLLOW_REQUESTED') {
+        entry.requested += row.n;
+      }
     }
     campaignFollowMap.set(row.name, entry);
   }
-  const followsByCampaign: CampaignFollowMetric[] = [...campaignFollowMap.entries()].map(([name, e]) => ({
-    name,
-    following: e.following,
-    requested: e.requested,
-    total: e.total,
-  }));
+  const followsByCampaign: CampaignFollowMetric[] = [...campaignFollowMap.entries()].map(
+    ([name, e]) => ({
+      name,
+      following: e.following,
+      requested: e.requested,
+      unfollowed: e.unfollowed,
+      open: e.open,
+      total: e.total,
+    }),
+  );
 
-  return { campaigns, runsByType, actions, cyclesByOrigin, openFollowsByState, followsByCampaign, followBack };
+  return {
+    campaigns,
+    runsByType,
+    actions,
+    cyclesByOrigin,
+    openFollowsByState,
+    followsByCampaign,
+    followBack,
+  };
 }
 
 /** Renderiza as métricas do experimento como texto legível. */
@@ -246,12 +280,14 @@ export function formatMetrics(metrics: Metrics): string {
   }
 
   lines.push('');
-  lines.push('Follows por campanha (abertos):');
+  lines.push('Follows por campanha (histórico):');
   if (metrics.followsByCampaign.length === 0) {
-    lines.push('  (nenhum follow aberto)');
+    lines.push('  (nenhum follow registrado)');
   } else {
     for (const c of metrics.followsByCampaign) {
-      lines.push(`  ${c.name}: ${c.following} seguindo, ${c.requested} solicitações  (${c.total})`);
+      lines.push(
+        `  ${c.name}: ${c.following} seguindo, ${c.requested} solicitações, ${c.unfollowed} unfollow (${c.total} histórico)`,
+      );
     }
   }
 

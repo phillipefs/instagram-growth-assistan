@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <title>appassetlens • Instagram</title>
+  </head>
+  <body>
+    <header>
+      <h2 data-testid="profile-username">appassetlens</h2>
+      <a href="#" id="open-following">3 seguindo</a>
+    </header>
+
+    <div role="dialog" data-testid="following-dialog" id="following-dialog" hidden>
+      <span>Seguindo</span>
+      <input aria-label="Entrada da pesquisa" placeholder="Pesquisar" type="text" />
+      <div id="edu-row" data-username="edu.brasileiro">
+        <a href="/edu.brasileiro/">edu.brasileiro</a>
+        <span>Eduardo Brasileiro</span>
+        <button type="button" id="edu-action">Seguindo</button>
+      </div>
+      <div id="other-row" data-username="outro.perfil">
+        <a href="/outro.perfil/">outro.perfil</a>
+        <button type="button">Seguindo</button>
+      </div>
+    </div>
+
+    <div role="dialog" id="confirm-dialog" hidden>
+      <button type="button" id="confirm-unfollow">Deixar de seguir</button>
+      <button type="button" id="cancel-unfollow">Cancelar</button>
+    </div>
+
+    <script>
+      const followingDialog = document.getElementById('following-dialog');
+      const confirmDialog = document.getElementById('confirm-dialog');
+      const eduRow = document.getElementById('edu-row');
+      document.getElementById('open-following').addEventListener('click', () => {
+        followingDialog.hidden = false;
+      });
+      followingDialog.querySelector('input').addEventListener('input', (event) => {
+        const query = event.target.value.toLowerCase();
+        for (const row of followingDialog.querySelectorAll('[data-username]')) {
+          row.hidden = !row.dataset.username.includes(query);
+        }
+      });
+      document.getElementById('edu-action').addEventListener('click', () => {
+        confirmDialog.hidden = false;
+      });
+      document.getElementById('cancel-unfollow').addEventListener('click', () => {
+        confirmDialog.hidden = true;
+      });
+      document.getElementById('confirm-unfollow').addEventListener('click', () => {
+        eduRow.remove();
+        confirmDialog.hidden = true;
+      });
+    </script>
+  </body>
+</html>

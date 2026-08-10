@@ -16,6 +16,7 @@ export interface FollowBackInspection {
   readonly safetyState: SafetyState;
   readonly profileType: ProfileType;
   readonly followsYou: boolean;
+  readonly notFollowingConfirmed?: boolean;
 }
 
 export interface FollowBackDriver {
@@ -43,7 +44,11 @@ interface CycleRow {
   readonly username: string;
 }
 
-/** Carrega os ciclos abertos (seguindo) da conta, opcionalmente por campanha. */
+/**
+ * Carrega apenas ciclos abertos ainda não inspecionados, opcionalmente por
+ * campanha. Qualquer resultado persistido, inclusive `UNKNOWN`, possui
+ * `follow_back_checked_at` e não volta para a fila.
+ */
 export function loadOpenCyclesForAccount(
   db: SqliteDatabase,
   localAccountId: string,
@@ -58,10 +63,13 @@ export function loadOpenCyclesForAccount(
         WHERE r.local_account_id = @account
           AND rc.unfollowed_at IS NULL
           AND rc.state IN ('FOLLOWING', 'FOLLOW_REQUESTED')
+          AND rc.follow_back_checked_at IS NULL
           ${campaignId ? 'AND rc.campaign_id = @campaign' : ''}
         ORDER BY rc.created_at, rc.id`,
     )
-    .all(campaignId ? { account: localAccountId, campaign: campaignId } : { account: localAccountId }) as CycleRow[];
+    .all(
+      campaignId ? { account: localAccountId, campaign: campaignId } : { account: localAccountId },
+    ) as CycleRow[];
 
   return rows.map((row) => ({
     cycleId: row.cycle_id,

@@ -8,7 +8,7 @@ describe('migrações', () => {
     const db = openDatabase(':memory:');
     try {
       const first = runMigrations(db, MIGRATIONS);
-      expect(first).toEqual([1, 2, 3, 4]);
+      expect(first).toEqual([1, 2, 3, 4, 5]);
       const second = runMigrations(db, MIGRATIONS);
       expect(second).toEqual([]);
 
@@ -47,7 +47,7 @@ describe('migrações', () => {
          VALUES ('signal', 'candidate', 'COMMENT', 'HISTORICO', ?)`,
       ).run(at);
 
-      expect(runMigrations(db, MIGRATIONS)).toEqual([4]);
+      expect(runMigrations(db, MIGRATIONS)).toEqual([4, 5]);
       expect(db.prepare('SELECT profile_id, shortcode, first_seen_at FROM media').get()).toEqual({
         profile_id: 'target',
         shortcode: 'HISTORICO',
@@ -78,6 +78,8 @@ describe('migrações', () => {
         'action_reconciliations',
         'candidate_signals',
         'target_profile_observations',
+        'follower_snapshots',
+        'follower_snapshot_members',
         'media',
         'leases',
       ]) {

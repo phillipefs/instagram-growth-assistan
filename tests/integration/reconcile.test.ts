@@ -18,13 +18,20 @@ import {
 let db: SqliteDatabase;
 
 class FakeDriver implements FollowBackDriver {
-  constructor(private readonly opts: { byUser?: Record<string, boolean>; safetyState?: SafetyState } = {}) {}
+  constructor(
+    private readonly opts: {
+      byUser?: Record<string, boolean>;
+      confirmedAbsence?: boolean;
+      safetyState?: SafetyState;
+    } = {},
+  ) {}
   inspect(profileUrl: string): Promise<FollowBackInspection> {
     const user = profileUrl.replace(/\/$/, '').split('/').pop() ?? '';
     return Promise.resolve({
       safetyState: this.opts.safetyState ?? 'SAFE',
       profileType: 'PUBLIC' as ProfileType,
       followsYou: this.opts.byUser?.[user] ?? false,
+      notFollowingConfirmed: this.opts.confirmedAbsence === true,
     });
   }
 }
@@ -36,7 +43,11 @@ function setup() {
   const make = (username: string) => {
     const profile = profiles.upsert({ username });
     const rel = relationships.ensure(account.id, profile.id);
-    const cycle = relationships.createCycle({ relationshipId: rel.id, origin: 'TOOL_CLICK', state: 'FOLLOWING' });
+    const cycle = relationships.createCycle({
+      relationshipId: rel.id,
+      origin: 'TOOL_CLICK',
+      state: 'FOLLOWING',
+    });
     return { profile, rel, cycle };
   };
   return { account, relationships, make };
@@ -48,20 +59,22 @@ beforeEach(() => {
 });
 
 describe('loadOpenCyclesForAccount', () => {
-  it('retorna apenas ciclos abertos', () => {
+  it('retorna apenas ciclos abertos ainda não inspecionados', () => {
     const { account, relationships, make } = setup();
-    make('u1');
-    const b = make('u2');
-    relationships.closeCycle(b.cycle.id, { unfollowReason: 'teste' });
+    const inspected = make('inspecionado');
+    relationships.setFollowBack(inspected.cycle.id, 'UNKNOWN');
+    const pending = make('pendente');
+    const closed = make('fechado');
+    relationships.closeCycle(closed.cycle.id, { unfollowReason: 'teste' });
 
     const items = loadOpenCyclesForAccount(db, account.id);
     expect(items).toHaveLength(1);
-    expect(items[0]?.username).toBe('u1');
+    expect(items[0]?.username).toBe(pending.profile.usernameDisplay);
   });
 });
 
 describe('runReconcile', () => {
-  it('salva YES/NO nos ciclos', async () => {
+  it('salva YES e mantém UNKNOWN quando não há confirmação positiva', async () => {
     const { account, relationships, make } = setup();
     const a = make('u1');
     const b = make('u2');
@@ -71,9 +84,11 @@ describe('runReconcile', () => {
     const summary = await runReconcile(db, items, driver, { limit: 10, accountShouldStop: false });
 
     expect(summary.yes).toBe(1);
-    expect(summary.no).toBe(1);
+    expect(summary.no).toBe(0);
+    expect(summary.unknown).toBe(1);
     expect(relationships.findCycleById(a.cycle.id)?.followBack).toBe('YES');
-    expect(relationships.findCycleById(b.cycle.id)?.followBack).toBe('NO');
+    expect(relationships.findCycleById(b.cycle.id)?.followBack).toBe('UNKNOWN');
+    expect(loadOpenCyclesForAccount(db, account.id)).toHaveLength(0);
   });
 
   it('para sob estado de segurança bloqueante', async () => {
@@ -84,5 +99,19 @@ describe('runReconcile', () => {
     const summary = await runReconcile(db, items, driver, { limit: 10, accountShouldStop: false });
     expect(summary.stopped).toBe(true);
     expect(summary.processed).toBe(0);
+  });
+
+  it('salva NO quando a lista completa confirma a ausência', async () => {
+    const { account, relationships, make } = setup();
+    const item = make('nao_segue');
+    const driver = new FakeDriver({ confirmedAbsence: true });
+
+    const summary = await runReconcile(db, loadOpenCyclesForAccount(db, account.id), driver, {
+      limit: 10,
+      accountShouldStop: false,
+    });
+
+    expect(summary.no).toBe(1);
+    expect(relationships.findCycleById(item.cycle.id)?.followBack).toBe('NO');
   });
 });

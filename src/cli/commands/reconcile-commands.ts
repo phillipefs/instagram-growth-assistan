@@ -1,9 +1,10 @@
 import type { Command } from 'commander';
 import { BrowserSession } from '../../browser/browser-session.js';
-import { readProfileSignals } from '../../browser/read-profile.js';
-import { assessProfile } from '../../browser/profile-detector.js';
 import { observePositiveProfileRelationship } from '../../browser/profile-network-relationship.js';
-import { readFollowsYou } from '../../browser/read-followback.js';
+import {
+  readFollowersList,
+  type FollowersListSnapshot,
+} from '../../browser/read-followers-list.js';
 import { openAppDatabase } from '../../database/app-db.js';
 import { withTransaction } from '../../database/connection.js';
 import { LocalAccountRepo } from '../../database/repositories/accounts.js';
@@ -26,16 +27,62 @@ function write(payload: unknown): void {
 }
 
 class PlaywrightFollowBackDriver implements FollowBackDriver {
-  constructor(private readonly session: BrowserSession) {}
+  private constructor(private readonly snapshot: FollowersListSnapshot) {}
+
+  static async create(
+    session: BrowserSession,
+    accountUsername: string,
+  ): Promise<PlaywrightFollowBackDriver> {
+    const account = canonicalUsername(accountUsername);
+    const profile = await session.inspectProfile(`https://www.instagram.com/${account}/`);
+    if (
+      profile.assessment.safetyState !== 'SAFE' ||
+      canonicalUsername(profile.assessment.username ?? '') !== account
+    ) {
+      return new PlaywrightFollowBackDriver({
+        complete: false,
+        expectedCount: profile.assessment.followersCount,
+        loadedCount: 0,
+        usernames: new Set<string>(),
+        reason: `perfil da conta ativa não reconhecido com segurança (${profile.assessment.safetyState})`,
+      });
+    }
+    const snapshot = await readFollowersList(
+      session.activePage,
+      account,
+      profile.assessment.followersCount,
+    );
+    return new PlaywrightFollowBackDriver(snapshot);
+  }
+
+  get report(): Omit<FollowersListSnapshot, 'usernames'> {
+    return {
+      complete: this.snapshot.complete,
+      expectedCount: this.snapshot.expectedCount,
+      loadedCount: this.snapshot.loadedCount,
+      reason: this.snapshot.reason,
+    };
+  }
 
   async inspect(profileUrl: string): Promise<FollowBackInspection> {
-    await this.session.goto(profileUrl);
-    const page = this.session.activePage;
-    const assessment = assessProfile(await readProfileSignals(page));
+    let username: string;
+    try {
+      username = canonicalUsername(
+        new URL(profileUrl).pathname.split('/').filter(Boolean)[0] ?? '',
+      );
+    } catch {
+      return {
+        safetyState: 'UNKNOWN_INTERFACE',
+        profileType: 'UNKNOWN',
+        followsYou: false,
+      };
+    }
+    const followsYou = this.snapshot.usernames.has(username);
     return {
-      safetyState: assessment.safetyState,
-      profileType: assessment.profileType,
-      followsYou: await readFollowsYou(page),
+      safetyState: this.snapshot.complete ? 'SAFE' : 'UNKNOWN_INTERFACE',
+      profileType: 'UNKNOWN',
+      followsYou,
+      notFollowingConfirmed: this.snapshot.complete && !followsYou,
     };
   }
 }
@@ -246,7 +293,9 @@ export function registerReconcileCommands(program: Command): void {
 
   program
     .command('reconcile-followback')
-    .description('Observa (somente leitura) quem passou a seguir de volta e registra o resultado.')
+    .description(
+      'Observa (somente leitura) follow-backs ainda não inspecionados e registra o resultado.',
+    )
     .option('--campaign <name>', 'restringe aos ciclos de uma campanha')
     .option('--account <username>', 'conta local (padrão: a primeira registrada)')
     .option('--limit <n>', 'máximo de perfis a verificar', '25')
@@ -301,13 +350,17 @@ export function registerReconcileCommands(program: Command): void {
               process.exitCode = 1;
               return;
             }
-            const driver = new PlaywrightFollowBackDriver(session);
+            const driver = await PlaywrightFollowBackDriver.create(session, account.username);
             const summary = await runReconcile(db, items, driver, {
               limit,
               accountShouldStop: report.account?.shouldStop ?? false,
             });
             logger.debug({ command: 'reconcile-followback' }, 'reconciliação concluída');
-            write(summary);
+            write({
+              ...summary,
+              source: 'active-account-followers-list',
+              followersList: driver.report,
+            });
           } finally {
             await session.close().catch(() => undefined);
           }

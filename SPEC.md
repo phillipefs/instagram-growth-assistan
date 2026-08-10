@@ -56,8 +56,18 @@ AND followed_at IS NOT NULL
 AND unfollowed_at IS NULL
 AND whitelisted = false
 AND protected = false
-AND (preserveFollowBacks = false OR follow_back = NO)
+AND (preserveFollowBacks = false OR (follow_back = NO AND observation_is_fresh))
 ```
+
+Com `--preserve-follow-backs`, `YES`, `UNKNOWN` e observações vencidas falham
+fechado e não entram no plano. A política é congelada com o plano. O planejamento
+exige um snapshot completo e recente produzido por `followers:sync`; uma coleta
+incompleta nunca substitui o último snapshot válido.
+
+Com `--only-unattempted`, qualquer perfil que já possua uma tentativa local de
+`UNFOLLOW` é excluído. Na execução, ciclos `FOLLOWING` usam preferencialmente a
+busca exata da janela “Seguindo”; `FOLLOW_REQUESTED`, ausência na lista ou
+interface ambígua usam a página individual, sem inferir sucesso pela ausência.
 
 ## Critérios de aceite (Fase 01)
 

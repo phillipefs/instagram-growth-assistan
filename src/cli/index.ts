@@ -14,6 +14,7 @@ import { registerUnfollowPlanCommands } from './commands/unfollow-plan-commands.
 import { registerUnfollowCommands } from './commands/unfollow-commands.js';
 import { registerReportCommands } from './commands/report-commands.js';
 import { registerDebugCommands } from './commands/debug-commands.js';
+import { registerFollowersCommands } from './commands/followers-commands.js';
 
 /**
  * Ponto de entrada da CLI.
@@ -78,6 +79,7 @@ export function buildProgram(): Command {
   registerFollowCommands(program);
   registerLikeCommands(program);
   registerReconcileCommands(program);
+  registerFollowersCommands(program);
   registerUnfollowPlanCommands(program);
   registerUnfollowCommands(program);
   registerReportCommands(program);

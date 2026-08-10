@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <title>appassetlens • Instagram</title>
+  </head>
+  <body>
+    <header>
+      <h2 data-testid="profile-username">appassetlens</h2>
+      <span>3 seguidores</span>
+      <a href="/appassetlens/followers/" data-testid="followers-link">3 seguidores</a>
+    </header>
+    <div data-testid="followers-dialog" role="dialog" hidden>
+      <h1>Seguidores</h1>
+      <div data-testid="followers-scroll" style="height: 100px; overflow-y: auto">
+        <div data-testid="follower-row">
+          <a href="/juniorkersul/">juniorkersul</a><button>Remover</button>
+        </div>
+        <div data-testid="follower-row">
+          <a href="/edu.brasileiro/">edu.brasileiro</a><button>Remover</button>
+        </div>
+        <div data-testid="follower-row">
+          <a href="/karlisson_invest/">karlisson_invest</a><button>Remover</button>
+        </div>
+      </div>
+    </div>
+    <script>
+      document
+        .querySelector('[data-testid="followers-link"]')
+        .addEventListener('click', (event) => {
+          event.preventDefault();
+          document.querySelector('[data-testid="followers-dialog"]').hidden = false;
+        });
+    </script>
+  </body>
+</html>

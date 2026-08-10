@@ -38,10 +38,18 @@ Listar todas as campanhas:
 npm run dev -- campaigns:list
 ```
 
+Atualizar a base completa de seguidores antes de consultar conversão ou criar
+um plano que preserve follow-backs:
+
+```bash
+npm run dev -- followers:sync --account "appassetlens"
+npm run dev -- followers:status --account "appassetlens" --check "edu.brasileiro"
+```
+
 Resumo da campanha:
 
 ```bash
-npm run dev -- candidates:list --campaign "professor_vicente" --summary --account "appassetlens"
+npm run dev -- campaign:summary --campaign "professor_vicente" --account "appassetlens"
 ```
 
 Campos principais:
@@ -49,6 +57,16 @@ Campos principais:
 - `candidates.total`: total de candidatos na campanha;
 - `postsWithSignals`: posts que geraram candidatos/sinais;
 - `currentRelationships.total`: seguindo + solicitações enviadas;
+- `relationshipHistory.unfollowed`: perfis que já tiveram unfollow;
+- `followBacks.yes`: perfis observados seguindo a conta de volta;
+- `followBacks.checked`: perfis já inspecionados, inclusive `UNKNOWN`;
+- `followBacks.classified`: perfis classificados como `YES` ou `NO`;
+- `followBacks.uninspected`: perfis que ainda aguardam inspeção;
+- `followBacks.coveragePct`: percentual já inspecionado;
+- `followersSnapshot.currentFromCampaign`: seguidores atuais presentes na campanha;
+- `conversion.ratePct`: seguidores atuais da campanha / perfis seguidos pela ferramenta;
+- `conversion.confirmedRatePct`: novos seguidores comprovados / perfis com baseline;
+- `conversion.attributionUnknown`: perfis sem snapshot anterior suficiente para atribuição;
 - `remaining.eligible`: candidatos que ainda podem entrar em um plano;
 - `remaining.neverAttempted`: candidatos sem nenhuma tentativa anterior;
 - `latestFollowAttempts.ambiguous`: tentativas com resultado não confirmado.
@@ -201,10 +219,16 @@ Prévia, sem ação:
 npm run dev -- plan-unfollow --campaign "professor_vicente" --account "appassetlens"
 ```
 
+Para manter follow-backs e também preservar qualquer estado desconhecido:
+
+```bash
+npm run dev -- plan-unfollow --campaign "professor_vicente" --preserve-follow-backs --only-unattempted --account "appassetlens"
+```
+
 Criar o plano:
 
 ```bash
-npm run dev -- plan:create-unfollow --campaign "professor_vicente" --limit 50 --account "appassetlens"
+npm run dev -- plan:create-unfollow --campaign "professor_vicente" --preserve-follow-backs --only-unattempted --account "appassetlens"
 ```
 
 Executar usando o `planId` retornado:
@@ -215,3 +239,7 @@ npm run dev -- unfollow --plan "<PLAN_ID_UNFOLLOW>" --mode supervised-batch --li
 
 Somente follows comprovadamente feitos pela ferramenta podem entrar no unfollow
 automático. Whitelist e perfis protegidos ficam sempre excluídos.
+`--only-unattempted` também exclui qualquer perfil com tentativa anterior de
+unfollow. Na execução, perfis `FOLLOWING` são buscados na janela “Seguindo” e
+processados ali; solicitações pendentes ou resultados não encontrados usam a
+página individual como fallback.

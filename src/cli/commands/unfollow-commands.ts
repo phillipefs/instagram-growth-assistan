@@ -5,6 +5,7 @@ import { BrowserSession } from '../../browser/browser-session.js';
 import { readProfileSignals } from '../../browser/read-profile.js';
 import { assessProfile } from '../../browser/profile-detector.js';
 import { performUnfollow } from '../../browser/unfollow-action.js';
+import { FollowingListUnfollowController } from '../../browser/following-list-unfollow.js';
 import { resolveDataPaths } from '../../config/paths.js';
 import { executionModeSchema, loadConfig } from '../../config/schema.js';
 import { openAppDatabase } from '../../database/app-db.js';
@@ -15,10 +16,12 @@ import { RunRepo } from '../../database/repositories/runs.js';
 import { ActionAttemptRepo } from '../../database/repositories/actions.js';
 import { applyDailyCap } from '../../workflows/daily-cap.js';
 import { formatProgressLine } from '../format/run-report.js';
+import { resolveUnfollowPlanPolicy } from '../../workflows/plan-unfollow.js';
 import {
   runUnfollow,
   type UnfollowDriver,
   type UnfollowInspection,
+  type UnfollowInspectContext,
   type UnfollowItem,
 } from '../../workflows/unfollow.js';
 import { NOOP_CONFIRMER, StdinConfirmer } from './stdin-confirmer.js';
@@ -38,12 +41,33 @@ const NOOP_DRIVER: UnfollowDriver = {
 };
 
 class PlaywrightUnfollowDriver implements UnfollowDriver {
+  private readonly followingList: FollowingListUnfollowController;
+  private followingListReady = false;
+  private currentSurface: 'FOLLOWING_LIST' | 'PROFILE' = 'PROFILE';
+
   constructor(
     private readonly session: BrowserSession,
     private readonly screenshotsDir: string,
-  ) {}
+    private readonly accountUsername: string,
+  ) {
+    this.followingList = new FollowingListUnfollowController(
+      session.activePage,
+      accountUsername,
+    );
+  }
 
-  async inspect(profileUrl: string): Promise<UnfollowInspection> {
+  async inspect(
+    profileUrl: string,
+    context?: UnfollowInspectContext,
+  ): Promise<UnfollowInspection> {
+    if (context?.relationshipState === 'FOLLOWING') {
+      const viaList = await this.inspectFollowingList(context.username);
+      if (viaList) return viaList;
+    }
+
+    this.currentSurface = 'PROFILE';
+    this.followingListReady = false;
+    this.followingList.invalidate();
     await this.session.goto(profileUrl);
     const page = this.session.activePage;
     const assessment = assessProfile(await readProfileSignals(page));
@@ -51,10 +75,14 @@ class PlaywrightUnfollowDriver implements UnfollowDriver {
       safetyState: assessment.safetyState,
       relationship: assessment.relationshipState,
       finalUrl: page.url(),
+      surface: 'PROFILE',
     };
   }
 
   performUnfollow() {
+    if (this.currentSurface === 'FOLLOWING_LIST') {
+      return this.followingList.performUnfollow();
+    }
     return performUnfollow(this.session.activePage);
   }
 
@@ -63,6 +91,42 @@ class PlaywrightUnfollowDriver implements UnfollowDriver {
     const target = path.join(this.screenshotsDir, `${label}-${Date.now()}.png`);
     await this.session.activePage.screenshot({ path: target });
     return target;
+  }
+
+  private async inspectFollowingList(username: string): Promise<UnfollowInspection | null> {
+    if (!this.followingListReady) {
+      await this.session.goto(profileUrlFor(this.accountUsername));
+      const sessionReport = await this.session.assess(this.accountUsername);
+      if (
+        sessionReport.assessment.safetyState !== 'SAFE' ||
+        sessionReport.account?.shouldStop
+      ) {
+        return {
+          safetyState: sessionReport.account?.shouldStop
+            ? 'ACCOUNT_CHANGED'
+            : sessionReport.assessment.safetyState,
+          relationship: 'UNKNOWN',
+          finalUrl: this.session.activePage.url(),
+          surface: 'FOLLOWING_LIST',
+        };
+      }
+      const opened = await this.followingList.open();
+      if (opened.status !== 'FOUND') {
+        this.followingList.invalidate();
+        return null;
+      }
+      this.followingListReady = true;
+    }
+
+    const lookup = await this.followingList.inspect(username);
+    if (lookup.status !== 'FOUND') return null;
+    this.currentSurface = 'FOLLOWING_LIST';
+    return {
+      safetyState: 'SAFE',
+      relationship: 'FOLLOWING',
+      finalUrl: `${this.session.activePage.url()}#following:${username}`,
+      surface: 'FOLLOWING_LIST',
+    };
   }
 }
 
@@ -88,7 +152,9 @@ export function registerUnfollowCommands(program: Command): void {
       const db = openAppDatabase();
       try {
         const accounts = new LocalAccountRepo(db);
-        const account = options.account ? accounts.findByUsername(options.account) : accounts.list()[0];
+        const account = options.account
+          ? accounts.findByUsername(options.account)
+          : accounts.list()[0];
         if (!account) {
           write({ error: 'Nenhuma conta local. Crie com account:create.' });
           process.exitCode = 1;
@@ -108,6 +174,10 @@ export function registerUnfollowCommands(program: Command): void {
           return;
         }
         const planFrozen = plan.state === 'FROZEN';
+        const planPolicy = resolveUnfollowPlanPolicy(plan.criteriaJson, {
+          preserveFollowBacks: config.unfollow.preserveFollowBacks,
+          followBackValidityDays: config.unfollow.followBackValidityDays,
+        });
 
         const profiles = new ProfileRepo(db);
         const items: UnfollowItem[] = [];
@@ -115,8 +185,11 @@ export function registerUnfollowCommands(program: Command): void {
           if (!it.relationshipCycleId) {
             continue;
           }
-          const snapshot = it.snapshotJson ? (JSON.parse(it.snapshotJson) as { username?: string }) : {};
-          const username = snapshot.username ?? profiles.findById(it.profileId)?.usernameCanonical ?? it.profileId;
+          const snapshot = it.snapshotJson
+            ? (JSON.parse(it.snapshotJson) as { username?: string })
+            : {};
+          const username =
+            snapshot.username ?? profiles.findById(it.profileId)?.usernameCanonical ?? it.profileId;
           items.push({
             profileId: it.profileId,
             username,
@@ -132,8 +205,8 @@ export function registerUnfollowCommands(program: Command): void {
           limit,
           accountId: account.id,
           accountUsername: account.username,
-          preserveFollowBacks: config.unfollow.preserveFollowBacks,
-          followBackValidityDays: config.unfollow.followBackValidityDays,
+          preserveFollowBacks: planPolicy.preserveFollowBacks,
+          followBackValidityDays: planPolicy.followBackValidityDays,
         };
 
         if (mode === 'dry-run') {
@@ -185,17 +258,30 @@ export function registerUnfollowCommands(program: Command): void {
           const report = await session.assess(account.username);
           if (report.assessment.safetyState !== 'SAFE') {
             runs.finish(run.id, 'FAILED', 'sessão não segura');
-            write({ ok: false, runId: run.id, safetyState: report.assessment.safetyState, stopReason: 'sessão não segura' });
+            write({
+              ok: false,
+              runId: run.id,
+              safetyState: report.assessment.safetyState,
+              stopReason: 'sessão não segura',
+            });
             process.exitCode = 1;
             return;
           }
           if (report.assessment.sessionStatus !== 'authenticated') {
             runs.finish(run.id, 'FAILED', 'sessão não autenticada');
-            write({ ok: false, runId: run.id, stopReason: 'sessão não autenticada; use session:open' });
+            write({
+              ok: false,
+              runId: run.id,
+              stopReason: 'sessão não autenticada; use session:open',
+            });
             process.exitCode = 1;
             return;
           }
-          const driver = new PlaywrightUnfollowDriver(session, resolveDataPaths().screenshots);
+          const driver = new PlaywrightUnfollowDriver(
+            session,
+            resolveDataPaths().screenshots,
+            account.username,
+          );
           const summary = await runUnfollow(db, items, driver, confirmer, {
             ...runOptions,
             limit: cap.effectiveLimit,
@@ -205,7 +291,11 @@ export function registerUnfollowCommands(program: Command): void {
             onProgress: (p) => process.stderr.write(`${formatProgressLine(p)}\n`),
           });
           runs.updateCounters(run.id, summary);
-          runs.finish(run.id, summary.stopped ? 'STOPPED' : 'COMPLETED', summary.stopReason ?? undefined);
+          runs.finish(
+            run.id,
+            summary.stopped ? 'STOPPED' : 'COMPLETED',
+            summary.stopReason ?? undefined,
+          );
           write({ ...summary, runId: run.id });
         } finally {
           confirmer.close();

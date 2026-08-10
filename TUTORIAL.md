@@ -254,12 +254,27 @@ npm run dev -- candidates:list --campaign "Teste" --summary
 npm run dev -- candidates:list --campaign "Teste" --summary --account <sua_conta>
 ```
 
+O mesmo resumo também possui um comando dedicado, recomendado para acompanhar
+a conversão da campanha:
+
+```bash
+npm run dev -- campaign:summary --campaign "Teste" --account <sua_conta>
+```
+
 O resumo separa:
 
 - `candidates.total`: total armazenado na campanha;
 - `postsWithSignals`: posts distintos que produziram ao menos um comentário ou
   curtida registrado;
 - `currentRelationships`: quantos estão seguindo ou com solicitação enviada;
+- `relationshipHistory`: perfis seguidos pela ferramenta, ciclos e unfollows;
+- `followBacks.checked`: perfis já inspecionados, inclusive `UNKNOWN`;
+- `followBacks.classified`: perfis concluídos como `YES` ou `NO`;
+- `followBacks.uninspected`: perfis que ainda aguardam inspeção;
+- `followersSnapshot.currentFromCampaign`: seguidores atuais presentes na campanha;
+- `conversion.ratePct`: seguidores atuais / perfis seguidos pela ferramenta;
+- `conversion.confirmedRatePct`: novos seguidores comprovados / perfis com baseline;
+- `conversion.attributionUnknown`: perfis sem snapshot anterior ao follow;
 - `latestFollowAttempts`: último resultado registrado por pessoa;
 - `remaining.eligible`: todos que ainda poderiam entrar em um plano;
 - `remaining.neverAttempted`: somente pessoas sem qualquer tentativa anterior.
@@ -671,7 +686,10 @@ os follows que a ferramenta fez.
 - `--from <YYYY-MM-DD>` / `--to <YYYY-MM-DD>`: intervalo de datas.
 - `--calendar-month <YYYY-MM>`: um mês de calendário.
 - `--campaign "<nome>"`: restringe a uma campanha. **Omita** para pegar todas.
-- `--exclude-followers`: não remover quem seguiu de volta.
+- `--preserve-follow-backs`: preserva `YES` e `UNKNOWN`; somente `NO` recente
+  pode entrar no plano.
+- `--exclude-followers`: alias compatível de `--preserve-follow-backs`.
+- `--only-unattempted`: exclui perfis com qualquer tentativa anterior de unfollow.
 - `--limit <n>`, `--export csv|json`.
 
 ```bash
@@ -681,6 +699,8 @@ npm run dev -- plan-unfollow
 npm run dev -- plan-unfollow --campaign "Teste"
 # só quem foi seguido há mais de 7 dias (qualquer campanha)
 npm run dev -- plan-unfollow --older-than 7
+# preserva follow-backs e estados ainda desconhecidos
+npm run dev -- plan-unfollow --campaign "Teste" --preserve-follow-backs --only-unattempted
 ```
 
 **Saída (exemplo):**
@@ -693,7 +713,7 @@ npm run dev -- plan-unfollow --older-than 7
     "totalFound": 2,
     "totalEligible": 2,
     "totalProposed": 2,
-    "excluded": { "no_tool_history": 0, "whitelisted": 0, "protected": 0, "follower": 0, "follow_back_not_no": 0 },
+    "excluded": { "no_tool_history": 0, "whitelisted": 0, "protected": 0, "previously_attempted": 0, "follower": 0, "follow_back_not_no": 0 },
     "proposed": [ { "username": "alexfernandesprestes" } ]
   }
 }
@@ -707,12 +727,21 @@ npm run dev -- plan:create-unfollow
 npm run dev -- plan:create-unfollow --campaign "Teste"
 # só quem foi seguido há mais de N dias
 npm run dev -- plan:create-unfollow --older-than 7
+# a política fica congelada dentro do plano
+npm run dev -- plan:create-unfollow --campaign "Teste" --preserve-follow-backs --only-unattempted
 ```
 
 ### `unfollow` — deixa de seguir de verdade (supervisionado)
 Executa o plano de unfollow. Revalida cada item ao vivo. Se você já tiver deixado
 de seguir manualmente, ele **sincroniza sem clicar**. Uma solicitação pendente é
 **cancelada** (não é "unfollow").
+
+Para perfis `FOLLOWING`, a execução abre e reutiliza a janela “Seguindo” da conta,
+busca o username exato e atua somente na linha cujo href, username e botão foram
+confirmados. Se um fallback navegar para outro perfil, a janela é reaberta no
+próximo item compatível. Se a linha não for encontrada ou a conta estiver em
+`FOLLOW_REQUESTED`, abre a página individual como fallback. Ausência na busca
+nunca é tratada como prova de que o unfollow já ocorreu.
 
 - `--plan <id>` (obrigatório).
 - `--mode`: `dry-run` | `manual` | `confirm-each` | `supervised-batch`.
@@ -747,14 +776,37 @@ npm run dev -- unfollow --plan 1657c7b4-b683-4acb-b41c-9b921067d257 --mode confi
 
 ---
 
-## 10. Reconciliação de follow-back (opcional)
+## 10. Snapshot de seguidores (recomendado)
+
+`followers:sync` abre a lista da conta ativa, carrega todos os seguidores e só
+salva o snapshot como completo quando alcança o contador exato exibido no
+perfil. O comando não segue nem deixa de seguir ninguém.
+
+```bash
+npm run dev -- followers:sync --account <sua_conta>
+npm run dev -- followers:status --account <sua_conta>
+npm run dev -- followers:status --account <sua_conta> --check <username>
+```
+
+Rode o sync antes do follow para criar o baseline da conversão confirmada e
+novamente depois da campanha. Para preservar quem segue você, rode-o também
+antes de `plan-unfollow --preserve-follow-backs`. Uma coleta incompleta é
+registrada para diagnóstico, mas nunca altera o último snapshot válido.
+
+## 11. Reconciliação de follow-back (legado/opcional)
 
 ### `reconcile-followback` — observa quem seguiu de volta
-Somente leitura: registra `YES`/`NO`/`UNKNOWN` de follow-back nos ciclos.
+Somente leitura: registra `YES`/`NO`/`UNKNOWN` de follow-back nos ciclos que
+ainda não foram inspecionados. Resultados anteriores, inclusive `UNKNOWN`, não
+voltam para a fila.
+A reconciliação abre uma vez a lista de seguidores da conta ativa e carrega a
+lista completa. Presença confirma `YES`; ausência só confirma `NO` quando a
+quantidade carregada alcança o contador exato do perfil. Lista incompleta ou
+interface inesperada interrompe o lote sem marcar os itens como processados.
 
-> **Observação:** com a política atual (não preservar follow-backs), este passo
-> é **opcional** — o unfollow remove todos os follows da ferramenta de qualquer
-> forma. Use só se quiser registrar quem retribuiu, para análise.
+> Este comando foi mantido por compatibilidade. No fluxo atual, prefira
+> `followers:sync`: o planejador com `--preserve-follow-backs` exige o snapshot
+> completo e recente. Por falha fechada, `UNKNOWN` também é preservado.
 
 - `--campaign`, `--account`, `--limit` (padrão 25), `--dry-run`.
 
@@ -765,9 +817,25 @@ npm run dev -- reconcile-followback --campaign "<nome>" --limit <n>
 npm run dev -- reconcile-followback --campaign "Teste" --dry-run
 ```
 
+O `--limit` funciona como tamanho do próximo lote. Repetir o comando avança
+pelos pendentes sem reprocessar os lotes anteriores:
+
+```bash
+npm run dev -- reconcile-followback --campaign "Teste" --limit 25
+npm run dev -- reconcile-followback --campaign "Teste" --limit 25
+```
+
 **Saída (exemplo):** (execução real, sem `--dry-run`)
 ```json
-{ "processed": 3, "yes": 0, "no": 3, "unknown": 0, "stopped": false, "stopReason": null }
+{
+  "processed": 25,
+  "yes": 4,
+  "no": 21,
+  "unknown": 0,
+  "stopped": false,
+  "source": "active-account-followers-list",
+  "followersList": { "expectedCount": 197, "loadedCount": 197, "complete": true }
+}
 ```
 
 ---

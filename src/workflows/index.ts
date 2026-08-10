@@ -8,4 +8,5 @@ export * from './follow.js';
 export * from './like-result.js';
 export * from './like.js';
 export * from './reconcile-followback.js';
+export * from './sync-followers.js';
 export * from './plan-unfollow.js';

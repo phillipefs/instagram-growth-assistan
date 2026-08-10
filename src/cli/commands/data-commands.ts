@@ -78,6 +78,39 @@ export function registerDataCommands(program: Command): void {
     });
 
   program
+    .command('campaign:summary')
+    .description('Resumo histórico e taxa de conversão de uma campanha.')
+    .requiredOption('--campaign <name>', 'nome da campanha')
+    .option('--account <username>', 'conta usada nas contagens (padrão: a primeira)')
+    .action((options: { campaign: string; account?: string }) => {
+      const db = openAppDatabase();
+      try {
+        const campaign = new CampaignRepo(db).findByName(options.campaign);
+        if (!campaign) {
+          write({ error: `Campanha não encontrada: ${options.campaign}` });
+          process.exitCode = 1;
+          return;
+        }
+        const accounts = new LocalAccountRepo(db);
+        const account = options.account
+          ? accounts.findByUsername(options.account)
+          : accounts.list()[0];
+        if (!account) {
+          write({ error: 'Nenhuma conta local. Crie com account:create.' });
+          process.exitCode = 1;
+          return;
+        }
+        write({
+          campaign: campaign.name,
+          account: account.username,
+          summary: buildCampaignSummary(db, campaign.id, account.id),
+        });
+      } finally {
+        db.close();
+      }
+    });
+
+  program
     .command('candidates:list')
     .description('Lista candidatos de uma campanha.')
     .requiredOption('--campaign <name>', 'nome da campanha')

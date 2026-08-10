@@ -8,5 +8,7 @@ export * from './follow-action.js';
 export * from './profile-network-relationship.js';
 export * from './like-action.js';
 export * from './read-followback.js';
+export * from './read-followers-list.js';
+export * from './following-list-unfollow.js';
 export * from './followback-detector.js';
 export * from './browser-session.js';

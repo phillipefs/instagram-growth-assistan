@@ -45,8 +45,16 @@ describe('computeMetrics', () => {
     const p1 = profiles.upsert({ username: 'a' });
     const p2 = profiles.upsert({ username: 'b' });
     const p3 = profiles.upsert({ username: 'c' });
-    candidates.add({ campaignId: campaign.id, profileId: p1.id, discoverySource: 'RECENT_POST_COMMENTERS' });
-    candidates.add({ campaignId: campaign.id, profileId: p2.id, discoverySource: 'RECENT_POST_LIKERS' });
+    candidates.add({
+      campaignId: campaign.id,
+      profileId: p1.id,
+      discoverySource: 'RECENT_POST_COMMENTERS',
+    });
+    candidates.add({
+      campaignId: campaign.id,
+      profileId: p2.id,
+      discoverySource: 'RECENT_POST_LIKERS',
+    });
     candidates.add({ campaignId: campaign.id, profileId: p3.id, discoverySource: 'FOLLOWERS' });
 
     new RunRepo(db).create({ type: 'FOLLOW', mode: 'supervised-batch' });
@@ -58,13 +66,26 @@ describe('computeMetrics', () => {
 
     const rel = new RelationshipRepo(db);
     const r1 = rel.ensure(account.id, p1.id);
-    const c1 = rel.createCycle({ relationshipId: r1.id, origin: 'TOOL_CLICK', campaignId: campaign.id });
+    const c1 = rel.createCycle({
+      relationshipId: r1.id,
+      origin: 'TOOL_CLICK',
+      campaignId: campaign.id,
+    });
     rel.setFollowBack(c1.id, 'YES');
     const r2 = rel.ensure(account.id, p2.id);
-    const c2 = rel.createCycle({ relationshipId: r2.id, origin: 'TOOL_CLICK', campaignId: campaign.id });
+    const c2 = rel.createCycle({
+      relationshipId: r2.id,
+      origin: 'TOOL_CLICK',
+      campaignId: campaign.id,
+    });
     rel.closeCycle(c2.id, { unfollowReason: 'teste' });
     const r3 = rel.ensure(account.id, p3.id);
-    rel.createCycle({ relationshipId: r3.id, origin: 'TOOL_CLICK', state: 'FOLLOW_REQUESTED', campaignId: campaign.id });
+    rel.createCycle({
+      relationshipId: r3.id,
+      origin: 'TOOL_CLICK',
+      state: 'FOLLOW_REQUESTED',
+      campaignId: campaign.id,
+    });
 
     const metrics = computeMetrics(db);
 
@@ -89,9 +110,16 @@ describe('computeMetrics', () => {
     expect(metrics.openFollowsByState.FOLLOWING).toBe(1);
     expect(metrics.openFollowsByState.FOLLOW_REQUESTED).toBe(1);
 
-    // Quebra por campanha (só abertos): C1 tem 1 seguindo + 1 solicitação.
+    // Quebra histórica por campanha: o ciclo fechado continua visível.
     const c1Follows = metrics.followsByCampaign.find((c) => c.name === 'C1');
-    expect(c1Follows).toEqual({ name: 'C1', following: 1, requested: 1, total: 2 });
+    expect(c1Follows).toEqual({
+      name: 'C1',
+      following: 1,
+      requested: 1,
+      unfollowed: 1,
+      open: 2,
+      total: 3,
+    });
 
     expect(metrics.followBack.YES).toBe(1);
     expect(metrics.followBack.UNKNOWN).toBe(2);
@@ -103,5 +131,28 @@ describe('computeMetrics', () => {
     expect(text).toContain('(nenhuma campanha com candidatos)');
     expect(text).toContain('(nenhuma execução)');
     expect(text).toContain('Follows abertos por estado:');
+  });
+
+  it('mantém a campanha nas métricas quando todos os follows foram encerrados', () => {
+    const account = new LocalAccountRepo(db).create({ username: 'minha_conta' });
+    const campaign = new CampaignRepo(db).create({ name: 'Finalizada' });
+    const profile = new ProfileRepo(db).upsert({ username: 'removido' });
+    const relationships = new RelationshipRepo(db);
+    const relationship = relationships.ensure(account.id, profile.id);
+    const cycle = relationships.createCycle({
+      relationshipId: relationship.id,
+      origin: 'TOOL_CLICK',
+      campaignId: campaign.id,
+    });
+    relationships.closeCycle(cycle.id, { unfollowReason: 'fim da campanha' });
+
+    expect(computeMetrics(db).followsByCampaign).toContainEqual({
+      name: 'Finalizada',
+      following: 0,
+      requested: 0,
+      unfollowed: 1,
+      open: 0,
+      total: 1,
+    });
   });
 });

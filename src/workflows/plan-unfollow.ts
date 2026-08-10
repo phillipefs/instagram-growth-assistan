@@ -1,7 +1,11 @@
 import type { SqliteDatabase } from '../database/connection.js';
 import type { FollowBackState } from '../domain/states.js';
 import { isEligibleForUnfollowByFollowBack } from '../domain/follow-back.js';
-import { computeUnfollowWindow, type CohortWindow, type UnfollowFilters } from '../domain/cohort.js';
+import {
+  computeUnfollowWindow,
+  type CohortWindow,
+  type UnfollowFilters,
+} from '../domain/cohort.js';
 import { PlanRepo, type Plan } from '../database/repositories/plans.js';
 
 export interface UnfollowCandidate {
@@ -14,6 +18,7 @@ export interface UnfollowCandidate {
   readonly followedByTool: boolean;
   readonly followBack: FollowBackState;
   readonly followBackCheckedAt: string | null;
+  readonly previouslyAttempted: boolean;
   readonly whitelisted: boolean;
   readonly protected: boolean;
 }
@@ -28,6 +33,7 @@ interface CohortRow {
   readonly followed_by_tool: number;
   readonly follow_back: string;
   readonly follow_back_checked_at: string | null;
+  readonly previously_attempted: number;
   readonly whitelisted: number;
   readonly protected: number;
 }
@@ -65,6 +71,12 @@ export function loadUnfollowCohort(
               p.username_display AS username, rc.followed_at AS followed_at, rc.campaign_id AS campaign_id,
               rc.followed_by_tool AS followed_by_tool, rc.follow_back AS follow_back,
               rc.follow_back_checked_at AS follow_back_checked_at,
+              CASE WHEN EXISTS (
+                SELECT 1 FROM action_attempts a
+                 WHERE a.local_account_id = @account
+                   AND a.profile_id = r.profile_id
+                   AND a.action_type = 'UNFOLLOW'
+              ) THEN 1 ELSE 0 END AS previously_attempted,
               r.whitelisted AS whitelisted, r.protected AS protected
          FROM relationship_cycles rc
          JOIN relationships r ON r.id = rc.relationship_id
@@ -84,6 +96,7 @@ export function loadUnfollowCohort(
     followedByTool: row.followed_by_tool === 1,
     followBack: row.follow_back as FollowBackState,
     followBackCheckedAt: row.follow_back_checked_at,
+    previouslyAttempted: row.previously_attempted === 1,
     whitelisted: row.whitelisted === 1,
     protected: row.protected === 1,
   }));
@@ -93,6 +106,7 @@ export type UnfollowExclusion =
   | 'no_tool_history'
   | 'whitelisted'
   | 'protected'
+  | 'previously_attempted'
   | 'follower'
   | 'follow_back_not_no';
 
@@ -100,6 +114,7 @@ export interface UnfollowPreviewOptions {
   readonly preserveFollowBacks: boolean;
   readonly followBackValidityDays: number;
   readonly excludeFollowers?: boolean;
+  readonly onlyUnattempted?: boolean;
   readonly limit?: number;
   readonly now?: Date;
 }
@@ -124,6 +139,9 @@ export function selectEligibleUnfollowCandidates(
   const now = options.now ?? new Date();
   const eligible = candidates.filter((c) => {
     if (!c.followedByTool || c.whitelisted || c.protected) {
+      return false;
+    }
+    if (options.onlyUnattempted && c.previouslyAttempted) {
       return false;
     }
     if (options.excludeFollowers && c.followBack === 'YES') {
@@ -151,6 +169,7 @@ export function buildUnfollowPreview(
     no_tool_history: 0,
     whitelisted: 0,
     protected: 0,
+    previously_attempted: 0,
     follower: 0,
     follow_back_not_no: 0,
   };
@@ -163,6 +182,8 @@ export function buildUnfollowPreview(
       excluded.whitelisted += 1;
     } else if (c.protected) {
       excluded.protected += 1;
+    } else if (options.onlyUnattempted && c.previouslyAttempted) {
+      excluded.previously_attempted += 1;
     } else if (options.excludeFollowers && c.followBack === 'YES') {
       excluded.follower += 1;
     } else if (
@@ -186,7 +207,11 @@ export function buildUnfollowPreview(
     totalEligible: eligibleCount,
     totalProposed: proposed.length,
     excluded,
-    proposed: proposed.map((c) => ({ username: c.username, followedAt: c.followedAt, campaignId: c.campaignId })),
+    proposed: proposed.map((c) => ({
+      username: c.username,
+      followedAt: c.followedAt,
+      campaignId: c.campaignId,
+    })),
   };
 }
 
@@ -202,6 +227,38 @@ export interface FreezeUnfollowPlanResult {
   readonly window: CohortWindow;
 }
 
+export interface UnfollowPlanPolicy {
+  readonly preserveFollowBacks: boolean;
+  readonly followBackValidityDays: number;
+}
+
+/**
+ * Recupera a política congelada junto com os critérios do plano. Planos
+ * antigos não possuem esse campo e usam o fallback informado pela aplicação.
+ */
+export function resolveUnfollowPlanPolicy(
+  criteriaJson: string,
+  fallback: UnfollowPlanPolicy,
+): UnfollowPlanPolicy {
+  try {
+    const criteria = JSON.parse(criteriaJson) as {
+      policy?: { preserveFollowBacks?: unknown; followBackValidityDays?: unknown };
+    };
+    const preserveFollowBacks =
+      typeof criteria.policy?.preserveFollowBacks === 'boolean'
+        ? criteria.policy.preserveFollowBacks
+        : fallback.preserveFollowBacks;
+    const validity = criteria.policy?.followBackValidityDays;
+    const followBackValidityDays =
+      typeof validity === 'number' && Number.isInteger(validity) && validity >= 1
+        ? validity
+        : fallback.followBackValidityDays;
+    return { preserveFollowBacks, followBackValidityDays };
+  } catch {
+    return fallback;
+  }
+}
+
 /**
  * Congela um plano de unfollow imutável a partir dos candidatos elegíveis.
  */
@@ -212,6 +269,9 @@ export function freezeUnfollowPlan(
     filters: UnfollowFilters;
     preserveFollowBacks: boolean;
     followBackValidityDays: number;
+    followerSnapshotId?: string;
+    followerSnapshotObservedAt?: string;
+    onlyUnattempted?: boolean;
     campaignId?: string;
     now?: Date;
   },
@@ -227,6 +287,7 @@ export function freezeUnfollowPlan(
     preserveFollowBacks: input.preserveFollowBacks,
     followBackValidityDays: input.followBackValidityDays,
     ...(input.filters.excludeFollowers ? { excludeFollowers: true } : {}),
+    ...(input.onlyUnattempted ? { onlyUnattempted: true } : {}),
     ...(input.filters.limit ? { limit: input.filters.limit } : {}),
     now,
   };
@@ -239,12 +300,20 @@ export function freezeUnfollowPlan(
       localAccountId: input.localAccountId,
       filters: input.filters,
       window: { fromIso: window.fromIso ?? null, toIso: window.toIso ?? null },
+      policy: {
+        preserveFollowBacks: input.preserveFollowBacks,
+        followBackValidityDays: input.followBackValidityDays,
+        followerSnapshotId: input.followerSnapshotId ?? null,
+        followerSnapshotObservedAt: input.followerSnapshotObservedAt ?? null,
+      },
+      onlyUnattempted: input.onlyUnattempted ?? false,
       usernames: eligible.map((c) => c.username),
     },
     config: {
       preserveFollowBacks: input.preserveFollowBacks,
       followBackValidityDays: input.followBackValidityDays,
       excludeFollowers: input.filters.excludeFollowers ?? false,
+      onlyUnattempted: input.onlyUnattempted ?? false,
     },
   });
 

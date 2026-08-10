@@ -1,5 +1,9 @@
 import type { SqliteDatabase } from '../database/connection.js';
-import type { SafetyState, FollowBackState } from '../domain/states.js';
+import type {
+  SafetyState,
+  FollowBackState,
+  RelationshipState,
+} from '../domain/states.js';
 import type { ExecutionMode } from '../config/schema.js';
 import type { ObservedRelationship } from '../browser/profile-detector.js';
 import { canonicalUsername } from '../database/util.js';
@@ -24,10 +28,16 @@ export interface UnfollowInspection {
   readonly safetyState: SafetyState;
   readonly relationship: ObservedRelationship;
   readonly finalUrl: string;
+  readonly surface?: 'FOLLOWING_LIST' | 'PROFILE';
+}
+
+export interface UnfollowInspectContext {
+  readonly username: string;
+  readonly relationshipState: RelationshipState;
 }
 
 export interface UnfollowDriver {
-  inspect(profileUrl: string): Promise<UnfollowInspection>;
+  inspect(profileUrl: string, context?: UnfollowInspectContext): Promise<UnfollowInspection>;
   performUnfollow(): Promise<ObservedRelationship>;
   screenshot(label: string): Promise<string | null>;
 }
@@ -194,7 +204,10 @@ export async function runUnfollow(
           return { outcome: 'SKIP', reason: 'ciclo já encerrado' };
         }
         const rel = relationships.findById(cycle.relationshipId);
-        const insp = await driver.inspect(item.profileUrl);
+        const insp = await driver.inspect(item.profileUrl, {
+          username: item.username,
+          relationshipState: cycle.state,
+        });
         observed.set(bi.profileId, insp.relationship);
         const decision = evaluatePreAction(
           guardContext(insp, cycle, rel?.whitelisted ?? false, rel?.protected ?? false, options, now),

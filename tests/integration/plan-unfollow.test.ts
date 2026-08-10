@@ -7,12 +7,14 @@ import { LocalAccountRepo } from '../../src/database/repositories/accounts.js';
 import { ProfileRepo } from '../../src/database/repositories/profiles.js';
 import { RelationshipRepo } from '../../src/database/repositories/relationships.js';
 import { PlanRepo } from '../../src/database/repositories/plans.js';
+import { ActionAttemptRepo } from '../../src/database/repositories/actions.js';
 import type { FollowBackState, RelationshipOrigin } from '../../src/domain/states.js';
 import { computeUnfollowWindow } from '../../src/domain/cohort.js';
 import {
   buildUnfollowPreview,
   freezeUnfollowPlan,
   loadUnfollowCohort,
+  resolveUnfollowPlanPolicy,
 } from '../../src/workflows/plan-unfollow.js';
 
 let db: SqliteDatabase;
@@ -42,11 +44,9 @@ function make(
   });
   if (opts.followBack) {
     // Carimbo determinístico para o teste de frescor (dentro da validade e <= now).
-    db.prepare('UPDATE relationship_cycles SET follow_back = ?, follow_back_checked_at = ? WHERE id = ?').run(
-      opts.followBack,
-      '2026-07-15T00:00:00.000Z',
-      cycle.id,
-    );
+    db.prepare(
+      'UPDATE relationship_cycles SET follow_back = ?, follow_back_checked_at = ? WHERE id = ?',
+    ).run(opts.followBack, '2026-07-15T00:00:00.000Z', cycle.id);
   }
   return cycle;
 }
@@ -92,6 +92,28 @@ describe('planejador de unfollow', () => {
     expect(preview.totalEligible).toBe(1);
   });
 
+  it('exclui qualquer tentativa anterior com --only-unattempted', () => {
+    make('tentado', { followBack: 'NO' });
+    make('inedito', { followBack: 'NO' });
+    const attempted = new ProfileRepo(db).findByUsername('tentado');
+    expect(attempted).toBeDefined();
+    new ActionAttemptRepo(db).prepare({
+      localAccountId: accountId,
+      profileId: attempted!.id,
+      actionType: 'UNFOLLOW',
+      idempotencyKey: 'unfollow-anterior',
+    });
+
+    const window = computeUnfollowWindow({ calendarMonth: '2026-07' }, now);
+    const candidates = loadUnfollowCohort(db, { localAccountId: accountId, window });
+    const preview = buildUnfollowPreview(candidates, {
+      ...previewOptions,
+      onlyUnattempted: true,
+    });
+    expect(preview.excluded.previously_attempted).toBe(1);
+    expect(preview.proposed.map((item) => item.username)).toEqual(['inedito']);
+  });
+
   it('congela um plano de unfollow imutável', () => {
     make('elegivel', { followBack: 'NO' });
     make('protegido', { protected: true, followBack: 'NO' });
@@ -101,11 +123,25 @@ describe('planejador de unfollow', () => {
       filters: { calendarMonth: '2026-07' },
       preserveFollowBacks: true,
       followBackValidityDays: 3650,
+      followerSnapshotId: 'snapshot-test',
+      followerSnapshotObservedAt: '2026-08-06T11:00:00.000Z',
       now,
     });
     expect(result.plan.state).toBe('FROZEN');
     expect(result.plan.type).toBe('UNFOLLOW');
     expect(result.itemCount).toBe(1);
+    expect(
+      resolveUnfollowPlanPolicy(result.plan.criteriaJson, {
+        preserveFollowBacks: false,
+        followBackValidityDays: 7,
+      }),
+    ).toEqual({ preserveFollowBacks: true, followBackValidityDays: 3650 });
+    expect(JSON.parse(result.plan.criteriaJson)).toMatchObject({
+      policy: {
+        followerSnapshotId: 'snapshot-test',
+        followerSnapshotObservedAt: '2026-08-06T11:00:00.000Z',
+      },
+    });
 
     const items = new PlanRepo(db).listItems(result.plan.id);
     expect(items[0]?.relationshipCycleId).not.toBeNull();

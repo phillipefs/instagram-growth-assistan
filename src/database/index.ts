@@ -12,3 +12,4 @@ export * from './repositories/actions.js';
 export * from './repositories/media.js';
 export * from './repositories/plans.js';
 export * from './repositories/runs.js';
+export * from './repositories/follower-snapshots.js';

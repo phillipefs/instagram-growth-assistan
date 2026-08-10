@@ -2,6 +2,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test, expect } from '@playwright/test';
 import { performUnfollow } from '../../src/browser/unfollow-action.js';
+import { FollowingListUnfollowController } from '../../src/browser/following-list-unfollow.js';
 import { readProfileSignals } from '../../src/browser/read-profile.js';
 import { assessProfile } from '../../src/browser/profile-detector.js';
 
@@ -20,4 +21,24 @@ test('uma saída confirma NOT_FOLLOWING', async ({ page }) => {
   expect(before).toBe('FOLLOWING');
   const after = await performUnfollow(page, readOptions);
   expect(after).toBe('NOT_FOLLOWING');
+});
+
+test('deixa de seguir pela linha exata da janela Seguindo', async ({ page }) => {
+  await page.goto(fixtureUrl('following_list.html'));
+  const controller = new FollowingListUnfollowController(page, 'appassetlens');
+  expect((await controller.open()).status).toBe('FOUND');
+  expect((await controller.inspect('edu.brasileiro')).status).toBe('FOUND');
+  expect(await controller.performUnfollow()).toBe('NOT_FOLLOWING');
+  expect(await page.locator('#edu-row').count()).toBe(0);
+  expect(await page.locator('#other-row').count()).toBe(1);
+});
+
+test('ausência na busca exige fallback e não clica em outra linha', async ({ page }) => {
+  await page.goto(fixtureUrl('following_list.html'));
+  const controller = new FollowingListUnfollowController(page, 'appassetlens');
+  expect((await controller.open()).status).toBe('FOUND');
+  expect((await controller.inspect('nao_existe')).status).toBe('NOT_FOUND');
+  expect(await controller.performUnfollow()).toBe('UNKNOWN');
+  expect(await page.locator('#edu-row').count()).toBe(1);
+  expect(await page.locator('#other-row').count()).toBe(1);
 });

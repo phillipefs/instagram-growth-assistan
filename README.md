@@ -151,12 +151,15 @@ npm run dev -- plan-follow --campaign "<nome>"          # confira preview.totalP
 npm run dev -- plan:create-follow --campaign "<nome>" --limit 50
 npm run dev -- follow --plan <ID> --mode supervised-batch --limit 50 --skip-inactive 20 --like
 
-# 5. Depois de esperar, deixar de seguir a campanha
-npm run dev -- plan-unfollow --campaign "<nome>"
-npm run dev -- plan:create-unfollow --campaign "<nome>"
+# 5. Depois de esperar, sincronizar seguidores e preparar o unfollow
+npm run dev -- followers:sync --account <sua_conta>
+npm run dev -- followers:status --account <sua_conta> --check <username>
+npm run dev -- plan-unfollow --campaign "<nome>" --preserve-follow-backs --only-unattempted
+npm run dev -- plan:create-unfollow --campaign "<nome>" --preserve-follow-backs --only-unattempted
 npm run dev -- unfollow --plan <ID_UNFOLLOW> --mode supervised-batch --limit 50
 
 # 6. Conferir
+npm run dev -- campaign:summary --campaign "<nome>"
 npm run dev -- runs:report
 npm run dev -- metrics
 ```
@@ -197,7 +200,7 @@ db:reset --confirm     zera os dados locais (destrutivo)
 # cadastro / sessão
 account:create         registra conta local (sem senha/token)
 campaign:create        cria campanha com perfil-alvo
-campaigns:list | candidates:list [--summary] | history | fixtures:seed
+campaigns:list | campaign:summary | candidates:list [--summary] | history | fixtures:seed
 session:open           abre o navegador para login manual
 session:check          verifica a sessão (somente leitura)
 session:clear --confirm  apaga o perfil local do navegador
@@ -214,8 +217,10 @@ metrics                               métricas agregadas (por estado/campanha)
 follow [--skip-inactive --like]       follow supervisionado (dry-run padrão)
 follow:skip-ambiguous                 libera um follow ambíguo sem repetir o clique
 like-post                             curtida supervisionada de publicação
-reconcile-followback                  observa quem seguiu de volta (leitura)
-plan-unfollow [--campaign ...]        prévia dry-run de unfollow por coorte
+reconcile-followback                  cruza pendentes com a lista de seguidores (leitura)
+followers:sync                        salva um snapshot completo dos seguidores (leitura)
+followers:status [--check]            mostra snapshots e confere um username
+plan-unfollow [--preserve-follow-backs --only-unattempted]  prévia dry-run de unfollow
 plan:create-unfollow                  congela um plano de unfollow imutável
 unfollow                              unfollow supervisionado (dry-run padrão)
 ```
@@ -224,7 +229,12 @@ unfollow                              unfollow supervisionado (dry-run padrão)
 
 - **`metrics`** — visão agregada (somente leitura): coleta por campanha, desfecho
   das ações, ciclos abertos/fechados, follows **por estado** (seguindo vs
-  solicitação) e **por campanha**.
+  solicitação) e histórico **por campanha**, inclusive depois de todos os
+  unfollows.
+- **`campaign:summary --campaign "<nome>"`** — candidatos, follows atuais,
+  histórico de unfollow, seguidores atuais vindos da campanha e conversão. Com
+  snapshots antes e depois do follow, também separa novos seguidores com
+  atribuição comprovada; sem baseline, marca a atribuição como desconhecida.
 - **`runs:report [--run]`** — relatório legível de uma execução: cabeçalho,
   duração, contadores e itens com evidência.
 - **`plans:show --plan <id>`** — progresso de um plano específico.
