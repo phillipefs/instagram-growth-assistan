@@ -9,6 +9,8 @@ const MONTH_RE = /^\d{4}-\d{2}$/;
 
 export interface UnfollowFilters {
   readonly olderThanDays?: number;
+  /** Exige espera mínima e observação de follow-back após esse prazo. */
+  readonly noFollowBackAfterDays?: number;
   readonly followedWithinDays?: number;
   readonly from?: string;
   readonly to?: string;
@@ -62,10 +64,26 @@ export function subtractDays(now: Date, days: number): string {
  * Deriva a janela `{fromIso, toIso}` a partir dos filtros. Mês de calendário tem
  * precedência; datas explícitas vêm antes das janelas móveis.
  */
-export function computeUnfollowWindow(filters: UnfollowFilters, now: Date = new Date()): CohortWindow {
+export function computeUnfollowWindow(
+  filters: UnfollowFilters,
+  now: Date = new Date(),
+): CohortWindow {
+  if (
+    filters.noFollowBackAfterDays !== undefined &&
+    (!Number.isInteger(filters.noFollowBackAfterDays) || filters.noFollowBackAfterDays <= 0)
+  ) {
+    throw new Error('noFollowBackAfterDays exige um número inteiro positivo de dias.');
+  }
+  if (filters.olderThanDays !== undefined && filters.noFollowBackAfterDays !== undefined) {
+    throw new Error('Use olderThanDays ou noFollowBackAfterDays, não ambos.');
+  }
   if (filters.calendarMonth) {
     const range = calendarMonthRange(filters.calendarMonth);
-    return { fromIso: range.fromIso, toIso: range.toIso, label: `mês de calendário ${filters.calendarMonth}` };
+    return {
+      fromIso: range.fromIso,
+      toIso: range.toIso,
+      label: `mês de calendário ${filters.calendarMonth}`,
+    };
   }
 
   let fromIso: string | undefined;
@@ -84,9 +102,14 @@ export function computeUnfollowWindow(filters: UnfollowFilters, now: Date = new 
     fromIso = subtractDays(now, filters.followedWithinDays);
     parts.push(`seguidos nos últimos ${filters.followedWithinDays} dias`);
   }
-  if (toIso === undefined && filters.olderThanDays !== undefined) {
-    toIso = subtractDays(now, filters.olderThanDays);
-    parts.push(`seguidos há mais de ${filters.olderThanDays} dias`);
+  const minimumAgeDays = filters.noFollowBackAfterDays ?? filters.olderThanDays;
+  if (toIso === undefined && minimumAgeDays !== undefined) {
+    toIso = subtractDays(now, minimumAgeDays);
+    parts.push(
+      filters.noFollowBackAfterDays !== undefined
+        ? `sem follow-back após ${minimumAgeDays} dias`
+        : `seguidos há mais de ${minimumAgeDays} dias`,
+    );
   }
 
   return {

@@ -437,8 +437,10 @@ são mais engajados. Somente leitura.
 - `--likers`: também tenta curtidores (o Instagram costuma esconder).
 
 ```bash
-# genérico
+# somente comentários
 npm run dev -- collect --campaign "<nome>" --posts <n> --limit <n> --comments-per-post <n>
+# comentários + tentativa de capturar curtidores
+npm run dev -- collect --campaign "<nome>" --posts <n> --limit <n> --comments-per-post <n> --likers
 # exemplo real
 npm run dev -- collect --campaign "Teste" --posts 6 --limit 300
 # pulando 3 posts fixados no topo do grid
@@ -446,6 +448,12 @@ npm run dev -- collect --campaign "Teste" --posts 6 --limit 300 --skip-posts 3
 # post muito comentado: tenta extrair até 1.000 comentaristas por publicação
 npm run dev -- collect --campaign "Teste" --posts 1 --limit 1000 --comments-per-post 1000
 ```
+
+`--likers` não cria uma ação de curtida: apenas tenta ler a lista de quem curtiu
+cada publicação. Quando disponível, esses candidatos recebem a fonte
+`RECENT_POST_LIKERS`. Comentadores e curtidores entram na mesma campanha e são
+deduplicados; o planejamento de follow seguinte combina as duas fontes e
+prioriza os sinais de comentário. Não há um plano separado por fonte.
 
 **Saída (exemplo):**
 ```json
@@ -481,6 +489,8 @@ Mostra, ordenados por engajamento, quem seria seguido. Exclui quem você já seg
 npm run dev -- plan-follow --campaign "<nome>"
 # exemplo real
 npm run dev -- plan-follow --campaign "Teste"
+# somente pessoas ainda não tentadas, após coleta de comentários ou curtidores
+npm run dev -- plan-follow --campaign "Teste" --only-unattempted
 ```
 
 **Saída (exemplo):**
@@ -513,6 +523,8 @@ depois, em fatias, ao longo dos dias.
 npm run dev -- plan:create-follow --campaign "<nome>" --limit <n>
 # exemplo real
 npm run dev -- plan:create-follow --campaign "Teste" --limit 10
+# congela candidatos novos vindos de comentários e/ou curtidas
+npm run dev -- plan:create-follow --campaign "Teste" --only-unattempted --limit 10
 # repetição seletiva de perfis comprovadamente sem clique
 npm run dev -- plan:create-follow --campaign "Teste" --usernames "usuario1,usuario2"
 ```
@@ -682,6 +694,9 @@ Mostra quem seria removido, com filtros de período. Sem filtro, considera todos
 os follows que a ferramenta fez.
 
 - `--older-than <dias>`: seguidos há mais de N dias.
+- `--no-follow-back-after <dias>`: somente `NO` observado depois de completar N
+  dias desde o follow/solicitação; ativa a preservação de follow-backs e exige
+  snapshot completo recente.
 - `--followed-within <dias>`: seguidos nos últimos N dias.
 - `--from <YYYY-MM-DD>` / `--to <YYYY-MM-DD>`: intervalo de datas.
 - `--calendar-month <YYYY-MM>`: um mês de calendário.
@@ -699,6 +714,9 @@ npm run dev -- plan-unfollow
 npm run dev -- plan-unfollow --campaign "Teste"
 # só quem foi seguido há mais de 7 dias (qualquer campanha)
 npm run dev -- plan-unfollow --older-than 7
+# recomendado: só quem continuou sem seguir de volta após 7 dias
+npm run dev -- followers:sync --account <sua_conta>
+npm run dev -- plan-unfollow --campaign "Teste" --no-follow-back-after 7 --only-unattempted
 # preserva follow-backs e estados ainda desconhecidos
 npm run dev -- plan-unfollow --campaign "Teste" --preserve-follow-backs --only-unattempted
 ```
@@ -713,7 +731,7 @@ npm run dev -- plan-unfollow --campaign "Teste" --preserve-follow-backs --only-u
     "totalFound": 2,
     "totalEligible": 2,
     "totalProposed": 2,
-    "excluded": { "no_tool_history": 0, "whitelisted": 0, "protected": 0, "previously_attempted": 0, "follower": 0, "follow_back_not_no": 0 },
+    "excluded": { "no_tool_history": 0, "whitelisted": 0, "protected": 0, "previously_attempted": 0, "follower": 0, "follow_back_not_no": 0, "follow_back_wait_not_met": 0 },
     "proposed": [ { "username": "alexfernandesprestes" } ]
   }
 }
@@ -727,6 +745,8 @@ npm run dev -- plan:create-unfollow
 npm run dev -- plan:create-unfollow --campaign "Teste"
 # só quem foi seguido há mais de N dias
 npm run dev -- plan:create-unfollow --older-than 7
+# só quem continuou sem seguir de volta após 7 dias
+npm run dev -- plan:create-unfollow --campaign "Teste" --no-follow-back-after 7 --only-unattempted
 # a política fica congelada dentro do plano
 npm run dev -- plan:create-unfollow --campaign "Teste" --preserve-follow-backs --only-unattempted
 ```

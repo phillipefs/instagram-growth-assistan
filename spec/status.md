@@ -1,7 +1,7 @@
 # Status do Projeto — automation-seguidores
 
 Documento vivo com o que já está **finalizado e verificado**. Atualizado ao fim
-de cada fase. Última atualização: 2026-08-07.
+de cada fase. Última atualização: 2026-08-10.
 
 > Legenda: ✅ concluído e verificado · 🟡 parcial · ⬜ não iniciado
 
@@ -36,7 +36,7 @@ documento registra o que foi implementado em relação a elas.
 | Melhorias de campo (filtros, progresso, follow+like) | — | ✅ |
 | `10_seguranca_e_circuit_breaker.md` | `SafetyMonitor` central (núcleo) | ✅ (núcleo) / 🟡 transversal |
 | `11_recuperacao_logs_e_testes.md` | Idempotência, lease, logger, runs, evidência | ✅ |
-| `12_experimento_de_validacao.md` | Follow/curtida validados ao vivo; unfollow real pendente | 🟡 |
+| `12_experimento_de_validacao.md` | Fluxos de follow, curtida e unfollow validados | ✅ |
 | `13_revisao_final_e_entrega.md` | Handoff + aceite de risco (dado pelo usuário) | ✅ |
 
 > Ordem de implementação foi **reordenada** em relação à numeração: segurança,
@@ -66,9 +66,11 @@ documento registra o que foi implementado em relação a elas.
 ### Fase 03 — Banco de dados ✅
 - SQLite (better-sqlite3) com WAL e `foreign_keys` (`src/database/connection.ts`).
 - Migrações versionadas e transacionais (`src/database/migrator.ts`).
-- Migração `001` (schema completo) e `002` (fonte de descoberta + sinais).
+- Migrações `001`–`005`: schema inicial, descoberta/engajamento, reconciliações
+  de ações, observações de targets e snapshots de seguidores.
 - Repositórios tipados: contas, perfis/aliases, campanhas, candidatos, ciclos de
-  relacionamento, sinais de engajamento, tentativas de ação.
+  relacionamento, sinais de engajamento, planos, runs, tentativas de ação,
+  observações de targets e snapshots de seguidores.
 - Datas em UTC; `idempotency_key` com `UNIQUE`; deduplicação por chaves naturais.
 
 ### Fase 04 — Sessão e reconhecimento ✅
@@ -112,34 +114,37 @@ documento registra o que foi implementado em relação a elas.
 
 ### Fase 07 — Curtida de publicação ✅
 - Seleção pura da publicação recente, excluindo fixados antigos e respeitando a
-  idade máxima (`src/domain/recent-post.js`).
-- Ação de curtir com confirmação visual (`src/browser/like-action.js`).
+  idade máxima (`src/domain/recent-post.ts`).
+- Ação de curtir com confirmação visual (`src/browser/like-action.ts`).
 - Workflow `runLike` nos modos `dry-run`/`manual`/`confirm-each` (sem lote), uma
-  curtida por candidato por campanha, com registro de mídia (`src/workflows/like.js`).
+  curtida por candidato por campanha, com registro de mídia (`src/workflows/like.ts`).
 - Comando `like-post`.
 
 ### Reconciliação de follow-back ✅
-- Frescor/elegibilidade puros (`src/domain/follow-back.js`): só `NO` fresco é
+- Frescor/elegibilidade puros (`src/domain/follow-back.ts`): só `NO` fresco é
   elegível ao unfollow; `YES`/`UNKNOWN`/vencido falham fechado.
-- Detector do selo "segue você" (`src/browser/followback-detector.js`,
-  `src/browser/read-followback.js`).
-- Workflow `runReconcile` somente leitura que salva `YES`/`NO`/`UNKNOWN` no ciclo
-  (`src/workflows/reconcile-followback.js`) e comando `reconcile-followback`.
+- A lista completa de seguidores é a fonte principal: presença confirma `YES` e
+  ausência só confirma `NO` quando o carregamento alcança o contador observado.
+- `followers:sync` persiste snapshots imutáveis; coletas incompletas nunca
+  substituem o último snapshot completo.
+- O detector legado do selo "segue você" continua disponível para leitura.
 
 ### Fase 08 — Planejador de unfollow ✅
-- Janelas de coorte puras (`src/domain/cohort.js`): janela móvel, intervalo de
+- Janelas de coorte puras (`src/domain/cohort.ts`): janela móvel, intervalo de
   datas e mês de calendário (distintos entre si).
 - Regra base + contagem de exclusões e plano imutável `UNFOLLOW`
-  (`src/workflows/plan-unfollow.js`).
+  (`src/workflows/plan-unfollow.ts`).
 - Comandos `plan-unfollow` (prévia/CSV) e `plan:create-unfollow`.
+- `--no-follow-back-after N` exige idade mínima individual, `NO` observado após
+  o prazo e snapshot completo recente antes de incluir alguém no plano.
 
 ### Fase 09 — Unfollow supervisionado ✅
 - Ação de deixar de seguir com confirmação visual e distinção entre `UNFOLLOW` e
-  `CANCEL_FOLLOW_REQUEST` (`src/browser/unfollow-action.js`,
-  `src/workflows/unfollow-result.js`).
+  `CANCEL_FOLLOW_REQUEST` (`src/browser/unfollow-action.ts`,
+  `src/workflows/unfollow-result.ts`).
 - Workflow `runUnfollow` nos quatro modos, revalidando por item origem
   (`TOOL_CLICK`), whitelist, proteção e follow-back; sincroniza sem clique quando
-  o usuário já deixou de seguir (`src/workflows/unfollow.js`).
+  o usuário já deixou de seguir (`src/workflows/unfollow.ts`).
 - Comando `unfollow` (plano `UNFOLLOW` congelado obrigatório; limite real zero).
 - Validado ponta a ponta no Instagram real (menu "Following" → diálogo → "Unfollow").
 
@@ -149,7 +154,7 @@ documento registra o que foi implementado em relação a elas.
   motivo de parada; o `runId` liga cada `action_attempt`.
 - `plans:show` mostra o **progresso** do plano (`PlanRepo.progress`): total,
   pendentes, confirmados, pulados, ambíguos, falhos e `percentDone`.
-- **Teto operacional diário** (`execution.dailyActionCap`, `src/workflows/daily-cap.js`):
+- **Teto operacional diário** (`execution.dailyActionCap`, `src/workflows/daily-cap.ts`):
   limita ações reais confirmadas/ambíguas por conta, por dia UTC, por tipo. Zero
   desliga o teto; nunca é um "limite seguro" da plataforma. `warm-up` (rampa
   gradual) **não** é implementado por ser contorno de limites da plataforma.
@@ -161,9 +166,9 @@ documento registra o que foi implementado em relação a elas.
   libera os demais itens do mesmo plano.
 - **Relatório e métricas**: `runs:report` gera um relatório human-readable
   consolidado de uma execução (cabeçalho, duração, contadores e itens com
-  evidência); `metrics` agrega cobertura de coleta, desfecho das ações, ciclos e
-  follow-back para o experimento de validação (`src/workflows/metrics.js`,
-  `src/cli/format/run-report.js`).
+  evidência); `metrics` agrega cobertura de coleta, desfecho das ações, ciclos,
+  follow-back e conversão por campanha e no total deduplicado
+  (`src/workflows/metrics.ts`, `src/cli/format/run-report.ts`).
 
 ### Melhorias de campo ✅
 Refinamentos pedidos durante os testes reais:
@@ -172,7 +177,7 @@ Refinamentos pedidos durante os testes reais:
   `stderr` (`[12/100] @fulano — confirmado ✓`), o JSON final fica limpo no stdout.
 - **`--skip-inactive <n>`** no follow: pula perfis com **menos de N seguidores E
   menos de N seguindo** (contas vazias/bot). Lê os contadores do cabeçalho do
-  perfil (`src/domain/profile-counts.js`); validado ao vivo. `inspect-profile`
+  perfil (`src/domain/profile-counts.ts`); validado ao vivo. `inspect-profile`
   também expõe `followersCount`/`followingCount`.
 - **`--like`** no follow: ao seguir um perfil **aberto**, curte 1 publicação
   recente na mesma passada (1 like por candidato por campanha, idempotente);
@@ -188,7 +193,9 @@ Refinamentos pedidos durante os testes reais:
   somente candidatos sem qualquer tentativa anterior de follow para a conta,
   incluindo a exclusão de itens pulados, ambíguos ou falhos.
 - **`metrics` enriquecido**: follows abertos **por estado** (seguindo vs
-  solicitação) e **por campanha**.
+  solicitação), histórico **por campanha**, conversão por campanha e total de
+  pessoas únicas. Usa o snapshot completo mais recente quando disponível e
+  informa a cobertura da medição.
 
 ## Comandos disponíveis
 
@@ -208,6 +215,8 @@ account:create        # registra conta local (sem senha/token)
 campaign:create       # cria campanha com perfil-alvo manual
 campaigns:list        # lista campanhas
 candidates:list       # lista candidatos; --summary mostra somente agregados
+campaign:summary      # resumo histórico e conversão de uma campanha
+target:summary        # agrega todas as campanhas de um perfil-alvo
 history               # histórico local de um username
 fixtures:seed         # dados de exemplo (sem Instagram)
 session:open          # abre navegador visível para login manual
@@ -222,23 +231,27 @@ plans:show --plan     # mostra um plano e seus itens (com progresso)
 runs:list             # lista execuções
 runs:show --run       # mostra uma execução
 runs:report [--run]   # relatório human-readable de uma execução (padrão: a mais recente)
-metrics               # métricas agregadas (por estado e por campanha; somente leitura)
+metrics [--account]   # métricas e conversão por campanha/total; somente leitura
 follow                # follow supervisionado (dry-run padrão) [--skip-inactive --like]
 follow:skip-ambiguous # pula explicitamente um follow ambíguo sem repetir o clique
+follow:confirm-ambiguous # confirma por leitura um follow ambíguo
 like-post             # curtida supervisionada de publicação recente
 reconcile-followback  # observa quem seguiu de volta (somente leitura)
-plan-unfollow         # prévia dry-run de unfollow por coorte [--campaign]
+followers:sync        # salva snapshot completo de seguidores
+followers:status      # lista snapshots e consulta um username
+plan-unfollow         # prévia por coorte [--no-follow-back-after N]
 plan:create-unfollow  # congela um plano de unfollow imutável
 unfollow              # unfollow supervisionado (dry-run padrão; real exige plano)
 ```
 
-## Modelo de dados (migrações 001–003)
+## Modelo de dados (migrações 001–005)
 
 Tabelas: `local_accounts`, `profiles`, `profile_aliases`, `campaigns`,
 `campaign_candidates` (com `discovery_source`), `relationships`,
 `relationship_cycles`, `candidate_signals`, `media`, `plans`, `plan_items`,
 `runs`, `action_attempts`, `action_reconciliations`, `safety_events`, `leases`,
-`schema_migrations`.
+`target_profile_observations`, `follower_snapshots`,
+`follower_snapshot_members` e `schema_migrations`.
 
 ## Decisões-chave
 
@@ -259,18 +272,22 @@ Detalhes em [`../DECISIONS.md`](../DECISIONS.md).
 ```text
 typecheck   ok
 lint        ok
-test        196 passed (unit + integração, 37 arquivos)
-test:e2e    23 passed (sessão, perfil, publicações, follow, curtida, follow-back, unfollow — Chromium real)
+test        226 passed (unit + integração, 42 arquivos)
+test:e2e    48 passed (7 arquivos; fixtures locais no Chromium)
 build       ok
 ```
 
 Testes usam apenas fixtures locais; nenhuma conta real é acessada.
 
-## Ainda não implementado (próximas fases)
+## Pendências conhecidas
 
-- 🟡 **Experimento de validação em conta própria** (fase 12): follow, curtida e
-  coleta **validados ao vivo** em campanhas reais (múltiplas campanhas, centenas
-  de follows e curtidas). Falta apenas testar o **unfollow real** ao vivo.
+- Cursor persistente de retomada da coleta; por enquanto as faixas são indicadas
+  explicitamente com `--skip-posts`.
+- Comandos de revisão em lote para mudar candidatos entre `APPROVED`, `REJECTED`
+  e `NEEDS_REVIEW`; os estados já existem no domínio e no banco.
+- Integração centralizada de `SafetyMonitor`, lease e persistência em
+  `safety_events` em todos os comandos de execução. Detectores, guardas e parada
+  fechada por workflow já estão implementados.
 - ✅ **Aceite de risco** (fase 13): dado pelo usuário em 2026-08-07.
 
 ## Handoff — checklist operacional (fase 13)

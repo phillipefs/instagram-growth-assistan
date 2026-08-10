@@ -2,6 +2,15 @@
 
 Registro de decisões (ADR resumido). Mais recente no topo.
 
+## ADR-0015 — Espera individual antes do unfollow por ausência de follow-back
+
+`--no-follow-back-after N` é um atalho conservador disponível na prévia e na
+criação do plano de unfollow. Ele exige que cada ciclo `TOOL_CLICK` tenha pelo
+menos N dias, que o follow-back seja `NO` em snapshot completo recente e que a
+observação tenha ocorrido depois de vencido o prazo individual. A regra ativa a
+preservação de `YES`/`UNKNOWN` e fica congelada no plano. A idade da campanha não
+é usada; follows ou solicitações recentes de campanhas antigas continuam fora.
+
 ## ADR-0014 — Conversão consolidada entre campanhas
 
 O comando `metrics` calcula, por conta local, a quantidade de perfis distintos

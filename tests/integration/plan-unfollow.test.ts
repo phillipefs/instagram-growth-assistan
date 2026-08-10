@@ -29,6 +29,7 @@ function make(
     whitelisted?: boolean;
     protected?: boolean;
     followBack?: FollowBackState;
+    followBackCheckedAt?: string;
   } = {},
 ) {
   const profile = new ProfileRepo(db).upsert({ username });
@@ -46,7 +47,7 @@ function make(
     // Carimbo determinístico para o teste de frescor (dentro da validade e <= now).
     db.prepare(
       'UPDATE relationship_cycles SET follow_back = ?, follow_back_checked_at = ? WHERE id = ?',
-    ).run(opts.followBack, '2026-07-15T00:00:00.000Z', cycle.id);
+    ).run(opts.followBack, opts.followBackCheckedAt ?? '2026-07-15T00:00:00.000Z', cycle.id);
   }
   return cycle;
 }
@@ -90,6 +91,72 @@ describe('planejador de unfollow', () => {
     const preview = buildUnfollowPreview(candidates, { ...previewOptions, excludeFollowers: true });
     expect(preview.excluded.follower).toBe(1);
     expect(preview.totalEligible).toBe(1);
+  });
+
+  it('só inclui NO observado após o prazo de --no-follow-back-after', () => {
+    make('elegivel', {
+      followedAt: '2026-07-20T00:00:00.000Z',
+      followBack: 'NO',
+      followBackCheckedAt: '2026-07-27T00:00:00.000Z',
+    });
+    make('checado_cedo', {
+      followedAt: '2026-07-20T00:00:00.000Z',
+      followBack: 'NO',
+      followBackCheckedAt: '2026-07-25T00:00:00.000Z',
+    });
+    make('seguiu_de_volta', {
+      followedAt: '2026-07-20T00:00:00.000Z',
+      followBack: 'YES',
+      followBackCheckedAt: '2026-07-27T00:00:00.000Z',
+    });
+    make('ainda_no_prazo', {
+      followedAt: '2026-08-01T00:00:00.000Z',
+      followBack: 'NO',
+      followBackCheckedAt: '2026-08-06T00:00:00.000Z',
+    });
+
+    const filters = { noFollowBackAfterDays: 7 };
+    const window = computeUnfollowWindow(filters, now);
+    const candidates = loadUnfollowCohort(db, { localAccountId: accountId, window });
+    const preview = buildUnfollowPreview(candidates, {
+      ...previewOptions,
+      excludeFollowers: true,
+      noFollowBackAfterDays: 7,
+    });
+
+    expect(candidates.map((candidate) => candidate.username)).not.toContain('ainda_no_prazo');
+    expect(preview.proposed.map((candidate) => candidate.username)).toEqual(['elegivel']);
+    expect(preview.excluded.follower).toBe(1);
+    expect(preview.excluded.follow_back_wait_not_met).toBe(1);
+
+    expect(() =>
+      freezeUnfollowPlan(db, {
+        localAccountId: accountId,
+        filters,
+        preserveFollowBacks: false,
+        followBackValidityDays: 3650,
+        now,
+      }),
+    ).toThrow('snapshot completo');
+
+    const frozen = freezeUnfollowPlan(db, {
+      localAccountId: accountId,
+      filters,
+      preserveFollowBacks: false,
+      followBackValidityDays: 3650,
+      followerSnapshotId: 'snapshot-recente',
+      followerSnapshotObservedAt: '2026-08-06T00:00:00.000Z',
+      now,
+    });
+    expect(frozen.itemCount).toBe(1);
+    expect(JSON.parse(frozen.plan.criteriaJson)).toMatchObject({
+      filters: { noFollowBackAfterDays: 7 },
+      policy: {
+        preserveFollowBacks: true,
+        noFollowBackAfterDays: 7,
+      },
+      usernames: ['elegivel'],
+    });
   });
 
   it('exclui qualquer tentativa anterior com --only-unattempted', () => {

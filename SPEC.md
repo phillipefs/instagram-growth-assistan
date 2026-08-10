@@ -3,8 +3,8 @@
 ## Objetivo
 
 Aplicativo local e supervisionado para operar campanhas no Instagram a partir de
-perfis-alvo do nicho financeiro: coletar seguidores, seguir candidatos, curtir no
-máximo uma publicação recente por candidato e, mais tarde, deixar de seguir
+perfis-alvo do nicho financeiro: coletar candidatos engajados, seguir candidatos,
+curtir no máximo uma publicação recente por candidato e deixar de seguir
 coortes por período/campanha, sempre com histórico local e parada fechada.
 
 O produto é um **assistente de lote supervisionado**, não um robô autônomo.
@@ -12,14 +12,18 @@ O produto é um **assistente de lote supervisionado**, não um robô autônomo.
 ## Funções do MVP
 
 1. **Coleta** — a partir de um perfil-alvo informado manualmente, descobrir
-   candidatos priorizando engajamento: comentaristas de publicações recentes,
-   depois curtidores (best-effort), depois a lista de seguidores. Registrar a
-   fonte de descoberta e os sinais de engajamento por candidato.
-2. **Campanha** — organizar candidatos, filtros e aprovação/rejeição manual.
-3. **Follow** — seguir candidatos aprovados nos modos suportados.
+   candidatos priorizando comentaristas de publicações recentes e, quando a
+   interface disponibiliza a lista, curtidores (best-effort). Registrar a fonte
+   de descoberta e os sinais de engajamento por candidato.
+2. **Campanha** — organizar candidatos, fontes, sinais e resumos por campanha e
+   perfil-alvo.
+3. **Follow** — seguir candidatos elegíveis a partir de planos imutáveis nos
+   modos suportados.
 4. **Curtida de publicação** — opcionalmente curtir uma publicação recente do
    candidato (nunca comentários, nunca mensagens diretas).
 5. **Unfollow** — planejar e executar unfollow de coortes com histórico local.
+6. **Medição** — sincronizar snapshots completos de seguidores e apresentar
+   conversão por campanha e consolidada, preservando cobertura e proveniência.
 
 ## Modos de execução
 
@@ -69,11 +73,20 @@ Com `--only-unattempted`, qualquer perfil que já possua uma tentativa local de
 busca exata da janela “Seguindo”; `FOLLOW_REQUESTED`, ausência na lista ou
 interface ambígua usam a página individual, sem inferir sucesso pela ausência.
 
-## Critérios de aceite (Fase 01)
+Com `--no-follow-back-after N`, o planejamento combina três condições: o follow
+ou a solicitação tem pelo menos N dias, o estado observado é `NO`, e a observação
+foi feita somente depois de completar esse prazo. O parâmetro ativa a preservação
+de follow-backs e exige snapshot completo recente. A idade é calculada por ciclo,
+não pela data de criação da campanha.
+
+## Critérios de aceite atuais
 
 - `npm run lint`, `npm run typecheck` e `npm test` passam.
 - O modo padrão é `dry-run` e o limite real padrão é zero.
-- Nenhum código abre o Instagram ou executa cliques.
+- O navegador é sempre visível e o login é manual.
+- Ações reais exigem modo explícito, limite positivo e confirmação; follow e
+  unfollow também exigem plano congelado.
+- Nenhuma ação ambígua é repetida automaticamente.
 - Dados operacionais resolvem para fora do workspace.
 - Documentos base criados e coerentes entre si.
 

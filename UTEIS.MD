@@ -89,6 +89,8 @@ Campos principais:
 
 ## 3. Coletar candidatos
 
+### Opção A — somente comentários
+
 Primeira coleta da campanha: percorre os posts 1 a 20 e extrai até 2.000
 comentaristas por post, encerrando ao alcançar 20.000 candidatos únicos.
 `--skip-posts 0` é opcional porque zero já é o padrão:
@@ -96,6 +98,20 @@ comentaristas por post, encerrando ao alcançar 20.000 candidatos únicos.
 ```bash
 npm run dev -- collect --campaign "professor_vicente" --skip-posts 0 --posts 20 --limit 20000 --comments-per-post 2000 --account "appassetlens"
 ```
+
+### Opção B — comentários e curtidores
+
+Para percorrer a mesma faixa e também tentar capturar quem curtiu cada post,
+adicione `--likers`:
+
+```bash
+npm run dev -- collect --campaign "professor_vicente" --skip-posts 0 --posts 20 --limit 20000 --comments-per-post 2000 --likers --account "appassetlens"
+```
+
+Essa opção continua coletando comentários. Os curtidores são acrescentados como
+`RECENT_POST_LIKERS` quando a lista estiver disponível; se o Instagram ocultar a
+lista, o resultado informa `likersUnavailable` e a coleta dos comentários
+continua normalmente. O comando não curte posts nem segue ninguém.
 
 Segunda coleta da mesma campanha: ignora os 20 primeiros posts e percorre os
 posts 21 a 40:
@@ -118,6 +134,11 @@ nessa contagem.
 Repetições não duplicam o mesmo candidato nem o mesmo sinal do mesmo post.
 
 ## 4. Conferir quem nunca foi tentado
+
+Depois de qualquer uma das duas coletas, a prévia e o plano de follow são os
+mesmos. Comentários e curtidas ficam na mesma campanha, com deduplicação; não
+existe um plano separado por fonte. A ordenação prioriza comentaristas e usa os
+sinais de curtida como pontuação adicional.
 
 Prévia somente leitura:
 
@@ -233,22 +254,31 @@ npm run dev -- history --username "<USERNAME>"
 
 ## 8. Unfollow da campanha
 
-Prévia, sem ação:
+Fluxo recomendado: atualizar primeiro a lista completa de seguidores e mostrar
+uma prévia somente de quem continuou sem seguir de volta após 7 dias:
 
 ```bash
-npm run dev -- plan-unfollow --campaign "professor_vicente" --account "appassetlens"
+npm run dev -- followers:sync --account "appassetlens"
+npm run dev -- plan-unfollow --campaign "professor_vicente" --no-follow-back-after 7 --only-unattempted --account "appassetlens"
 ```
 
-Para manter follow-backs e também preservar qualquer estado desconhecido:
+`--no-follow-back-after 7` aplica o prazo individualmente a cada pessoa, usando a
+data em que o follow ou a solicitação foi feito. Portanto, alguém adicionado hoje
+não entra no plano só porque a campanha é antiga. O parâmetro também preserva
+automaticamente `YES` e `UNKNOWN` e exige que o `NO` tenha sido observado depois
+de a pessoa completar os 7 dias de espera.
+
+Criar o plano com a mesma regra:
+
+```bash
+npm run dev -- plan:create-unfollow --campaign "professor_vicente" --no-follow-back-after 7 --only-unattempted --account "appassetlens"
+```
+
+Para apenas manter follow-backs, mas sem exigir um prazo mínimo, ainda é possível
+usar a opção anterior:
 
 ```bash
 npm run dev -- plan-unfollow --campaign "professor_vicente" --preserve-follow-backs --only-unattempted --account "appassetlens"
-```
-
-Criar o plano:
-
-```bash
-npm run dev -- plan:create-unfollow --campaign "professor_vicente" --preserve-follow-backs --only-unattempted --account "appassetlens"
 ```
 
 Executar usando o `planId` retornado:

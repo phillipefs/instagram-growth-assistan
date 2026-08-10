@@ -13,17 +13,17 @@ estruturados (pino) com mascaramento de dados sensíveis.
 src/
   cli/            # Entrada da linha de comando (commander)
   config/         # Caminhos operacionais e schema de configuração (Zod)
-  database/       # Migrações e repositórios SQLite (fase futura)
+  database/       # Migrações e repositórios SQLite
   domain/         # Entidades e máquinas de estado separadas
-  browser/        # Abstração BrowserSession (fase futura)
-  instagram/      # Adaptadores de reconhecimento da interface (fase futura)
-  workflows/      # Coleta, follow, curtida, unfollow (fases futuras)
-  safety/         # SafetyMonitor e circuit breaker (fase futura)
+  browser/        # Sessão visível, leituras e ações supervisionadas
+  instagram/      # Localizadores e sinais da interface
+  workflows/      # Coleta, planos, execução, reconciliação e relatórios
+  safety/         # SafetyMonitor, guardas e lease por conta
   observability/  # Logger estruturado, evidências
 tests/
   unit/           # Testes unitários de domínio e configuração
-  integration/    # Banco, transações, idempotência (fase futura)
-  e2e/            # Playwright contra fixtures locais (fase futura)
+  integration/    # Banco, workflows, transações e idempotência
+  e2e/            # Playwright contra fixtures HTML locais
   fixtures/       # Páginas HTML simuladas
 ```
 
@@ -46,9 +46,9 @@ tests/
    confirmação única, limite obrigatório e revalidação por item — não é execução
    autônoma.
 
-## Sequência de implementação (revisada)
+## Sequência de implementação adotada
 
-1. Inicialização e tooling (esta fase).
+1. Inicialização e tooling.
 2. Segurança/config validada + contratos de domínio.
 3. Banco e repositórios.
 4. Sessão e login manual.
@@ -64,5 +64,25 @@ tests/
 
 ## Estado atual
 
-Fase 01 concluída: tooling, estrutura, configuração, logger, contratos de estado
-e testes unitários. Nenhum acesso ao Instagram implementado.
+O MVP está implementado como assistente local e supervisionado. A CLI possui
+sessão Playwright visível com login manual, coleta por engajamento, planos
+imutáveis, follow, curtida, reconciliação de resultados ambíguos, snapshots de
+seguidores, planejamento e execução de unfollow, runs auditáveis e métricas de
+conversão por campanha e no total.
+
+Ações reais continuam desabilitadas por padrão: exigem modo explícito, limite
+positivo, confirmação e, para follow/unfollow, plano congelado. CAPTCHA,
+checkpoint, aviso de atividade, troca de conta ou interface desconhecida causam
+parada fechada sem retomada automática.
+
+O SQLite, o perfil do navegador, screenshots e traces ficam fora do workspace.
+O histórico preserva a origem de cada relacionamento; somente ciclos
+`TOOL_CLICK` podem entrar no planejador automático de unfollow. Snapshots
+incompletos de seguidores ficam registrados para diagnóstico, mas não substituem
+o último snapshot completo.
+
+O núcleo do `SafetyMonitor`, o modelo de lease e a tabela `safety_events` estão
+implementados. A integração centralizada desses três componentes em todos os
+comandos de execução permanece registrada como débito técnico; hoje as paradas
+de segurança são aplicadas pelos detectores, pela sessão e pelas guardas de cada
+workflow.

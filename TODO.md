@@ -11,14 +11,14 @@ Itens reais pendentes, por fase. Marcar apenas o que existe de fato.
 - [x] Documentos base
 - [x] Testes unitários iniciais
 
-## Fase 02 — Segurança e contratos
+## Fase 02 — Segurança e contratos (concluída)
 - [x] `SafetyMonitor` central com estados e transições
 - [x] Estratégia de idempotency key (sem timestamp/username isolado)
 - [x] Máquina de tentativa de ação (PREPARED → CONFIRMED/AMBIGUOUS/FAILED/SKIPPED)
 - [x] Modelo de lease de concorrência (uma execução por conta)
 - [x] Comando `safety:status` (somente leitura)
 
-## Fase 03 — Banco de dados
+## Fase 03 — Banco de dados (concluída)
 - [x] Migrações versionadas
 - [x] Tabelas: contas, perfis/aliases, campanhas, candidatos, ciclos de
       relacionamento, mídias, planos/itens, runs, tentativas, eventos, locks
@@ -26,9 +26,9 @@ Itens reais pendentes, por fase. Marcar apenas o que existe de fato.
 - [x] Testes de migração, deduplicação, idempotência e transições
 - [x] Comandos: `db:migrate`, `db:status`, `db:reset --confirm`,
       `campaigns:list`, `candidates:list`, `history`, `fixtures:seed`
-- [ ] Repositórios de plans/runs (implementados nas fases correspondentes)
+- [x] Repositórios de plans/runs e acompanhamento de progresso
 
-## Fase 04 — Sessão e login manual
+## Fase 04 — Sessão e login manual (concluída)
 - [x] BrowserSession (perfil persistente local, encerramento seguro)
 - [x] Detecção de conta ativa e mudança de conta
 - [x] Detector de sessão/segurança puro e testável
@@ -36,7 +36,7 @@ Itens reais pendentes, por fase. Marcar apenas o que existe de fato.
 - [x] Comandos: `session:open`, `session:check`, `session:clear --confirm`
 - [x] Fixtures HTML + testes e2e (Playwright/Chromium)
 
-## Fase 05 — Reconhecimento e engajamento
+## Fase 05 — Reconhecimento e engajamento (concluída, exceto cursor persistente)
 - [x] Domínio de fontes de descoberta e sinais de engajamento
 - [x] Migração 002: `discovery_source` + tabela `candidate_signals`
 - [x] Reconhecimento de perfil (detector puro + leitor + fixtures + e2e)
@@ -45,23 +45,28 @@ Itens reais pendentes, por fase. Marcar apenas o que existe de fato.
 - [x] Coleta engajada e dry-run (ingest idempotente + plan-follow)
 - [x] Comandos `account:create`, `campaign:create`, `collect`, `plan-follow`
 - [ ] Cursor de retomada persistente da coleta (com núcleo de execução)
+- [ ] Comandos de revisão para aprovar/rejeitar candidatos em lote
 
-## Fase 06 — Núcleo de execução
+## Fase 06 — Núcleo de execução (concluída)
 - [x] Plano imutável (`FROZEN`) + itens em snapshot + hash de critérios
 - [x] Repositório de runs (ciclo de vida)
 - [x] Guarda pré-ação pura (safety, conta, plano, relacionamento)
 - [x] Motor de execução em lote idempotente (fecha em ambíguo/falha/limite)
 - [x] Comandos `plan:create-follow`, `plans:list/show`, `runs:list/show`
 
-## Fases seguintes
+## Funcionalidades operacionais implementadas
 - [x] Follow supervisionado (dry-run/manual/confirm-each/supervised-batch)
 - [x] Curtida de publicação recente (dry-run/manual/confirm-each)
-- [ ] Reconciliação de follow-back
-- [ ] Reconciliação de follow-back
-- [ ] Planejamento e execução de unfollow
-- [ ] Robustez, observabilidade e testes transversais
-- [ ] Experimento de validação e handoff
+- [x] Reconciliação de follow-back pela lista completa de seguidores
+- [x] Snapshots imutáveis de seguidores e proteção contra coleta incompleta
+- [x] Planejamento e execução supervisionada de unfollow
+- [x] Espera individual antes de unfollow por ausência de follow-back
+- [x] Robustez, observabilidade, evidências e testes transversais
+- [x] Relatórios de runs, resumos por target/campanha e métricas de conversão
+- [x] Experimento de validação e handoff
 
 ## Débitos técnicos
+- [ ] Integrar `SafetyMonitor`, lease e `safety_events` transversalmente aos
+      comandos de execução (os detectores e as guardas por ação já existem)
 - [ ] Avaliar ESLint com regras type-checked (recommendedTypeChecked)
 - [ ] Decidir biblioteca SQLite definitiva (better-sqlite3 x node:sqlite)

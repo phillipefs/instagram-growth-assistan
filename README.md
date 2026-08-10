@@ -82,6 +82,8 @@ continua de onde parou (não há retomada automática).
   ou `follow --like` (curte já ao seguir, só perfis abertos, na mesma passada).
 - **Unfollow por coorte** — por período (`--older-than`, `--from/--to`,
   `--calendar-month`), por campanha, ou tudo que a ferramenta seguiu.
+  `--no-follow-back-after N` restringe aos perfis que continuaram sem seguir de
+  volta depois do prazo individual.
 - **Filtro de qualidade** — `--skip-inactive N` pula perfis com menos de N
   seguidores. Se a contagem estiver desconhecida, não há clique.
 - **Progresso em tempo real** — uma linha por item no lote (`[12/100] @fulano — confirmado ✓`).
@@ -154,8 +156,8 @@ npm run dev -- follow --plan <ID> --mode supervised-batch --limit 50 --skip-inac
 # 5. Depois de esperar, sincronizar seguidores e preparar o unfollow
 npm run dev -- followers:sync --account <sua_conta>
 npm run dev -- followers:status --account <sua_conta> --check <username>
-npm run dev -- plan-unfollow --campaign "<nome>" --preserve-follow-backs --only-unattempted
-npm run dev -- plan:create-unfollow --campaign "<nome>" --preserve-follow-backs --only-unattempted
+npm run dev -- plan-unfollow --campaign "<nome>" --no-follow-back-after 7 --only-unattempted
+npm run dev -- plan:create-unfollow --campaign "<nome>" --no-follow-back-after 7 --only-unattempted
 npm run dev -- unfollow --plan <ID_UNFOLLOW> --mode supervised-batch --limit 50
 
 # 6. Conferir
@@ -201,6 +203,7 @@ db:reset --confirm     zera os dados locais (destrutivo)
 account:create         registra conta local (sem senha/token)
 campaign:create        cria campanha com perfil-alvo
 campaigns:list | campaign:summary | candidates:list [--summary] | history | fixtures:seed
+target:summary         agrega a coleta de todas as campanhas de um perfil-alvo
 session:open           abre o navegador para login manual
 session:check          verifica a sessão (somente leitura)
 session:clear --confirm  apaga o perfil local do navegador
@@ -216,11 +219,12 @@ runs:report [--run]                   relatório human-readable de uma execuçã
 metrics [--account]                   métricas e conversão por campanha/total
 follow [--skip-inactive --like]       follow supervisionado (dry-run padrão)
 follow:skip-ambiguous                 libera um follow ambíguo sem repetir o clique
+follow:confirm-ambiguous              confirma por leitura um follow ambíguo
 like-post                             curtida supervisionada de publicação
 reconcile-followback                  cruza pendentes com a lista de seguidores (leitura)
 followers:sync                        salva um snapshot completo dos seguidores (leitura)
 followers:status [--check]            mostra snapshots e confere um username
-plan-unfollow [--preserve-follow-backs --only-unattempted]  prévia dry-run de unfollow
+plan-unfollow [--no-follow-back-after --only-unattempted]   prévia dry-run de unfollow
 plan:create-unfollow                  congela um plano de unfollow imutável
 unfollow                              unfollow supervisionado (dry-run padrão)
 ```

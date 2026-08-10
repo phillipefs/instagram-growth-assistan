@@ -108,13 +108,15 @@ export type UnfollowExclusion =
   | 'protected'
   | 'previously_attempted'
   | 'follower'
-  | 'follow_back_not_no';
+  | 'follow_back_not_no'
+  | 'follow_back_wait_not_met';
 
 export interface UnfollowPreviewOptions {
   readonly preserveFollowBacks: boolean;
   readonly followBackValidityDays: number;
   readonly excludeFollowers?: boolean;
   readonly onlyUnattempted?: boolean;
+  readonly noFollowBackAfterDays?: number;
   readonly limit?: number;
   readonly now?: Date;
 }
@@ -129,6 +131,19 @@ export interface UnfollowPreview {
     readonly followedAt: string;
     readonly campaignId: string | null;
   }[];
+}
+
+function meetsNoFollowBackWaitingRule(
+  candidate: UnfollowCandidate,
+  waitingDays: number,
+  now: Date,
+): boolean {
+  if (!candidate.followBackCheckedAt) return false;
+  const followedAt = Date.parse(candidate.followedAt);
+  const checkedAt = Date.parse(candidate.followBackCheckedAt);
+  if (!Number.isFinite(followedAt) || !Number.isFinite(checkedAt)) return false;
+  const threshold = followedAt + waitingDays * 86_400_000;
+  return now.getTime() >= threshold && checkedAt >= threshold && checkedAt <= now.getTime();
 }
 
 /** Seleciona os candidatos elegíveis, ordenados do follow mais antigo ao mais recente. */
@@ -147,13 +162,21 @@ export function selectEligibleUnfollowCandidates(
     if (options.excludeFollowers && c.followBack === 'YES') {
       return false;
     }
-    return isEligibleForUnfollowByFollowBack({
-      value: c.followBack,
-      checkedAt: c.followBackCheckedAt,
-      validityDays: options.followBackValidityDays,
-      preserveFollowBacks: options.preserveFollowBacks,
-      now,
-    });
+    if (
+      !isEligibleForUnfollowByFollowBack({
+        value: c.followBack,
+        checkedAt: c.followBackCheckedAt,
+        validityDays: options.followBackValidityDays,
+        preserveFollowBacks: options.preserveFollowBacks,
+        now,
+      })
+    ) {
+      return false;
+    }
+    return (
+      options.noFollowBackAfterDays === undefined ||
+      (c.followBack === 'NO' && meetsNoFollowBackWaitingRule(c, options.noFollowBackAfterDays, now))
+    );
   });
   eligible.sort((a, b) => (a.followedAt < b.followedAt ? -1 : a.followedAt > b.followedAt ? 1 : 0));
   return options.limit && options.limit > 0 ? eligible.slice(0, options.limit) : eligible;
@@ -172,6 +195,7 @@ export function buildUnfollowPreview(
     previously_attempted: 0,
     follower: 0,
     follow_back_not_no: 0,
+    follow_back_wait_not_met: 0,
   };
 
   let eligibleCount = 0;
@@ -196,6 +220,11 @@ export function buildUnfollowPreview(
       })
     ) {
       excluded.follow_back_not_no += 1;
+    } else if (
+      options.noFollowBackAfterDays !== undefined &&
+      !meetsNoFollowBackWaitingRule(c, options.noFollowBackAfterDays, now)
+    ) {
+      excluded.follow_back_wait_not_met += 1;
     } else {
       eligibleCount += 1;
     }
@@ -277,6 +306,18 @@ export function freezeUnfollowPlan(
   },
 ): FreezeUnfollowPlanResult {
   const now = input.now ?? new Date();
+  const noFollowBackAfterDays = input.filters.noFollowBackAfterDays;
+  if (
+    noFollowBackAfterDays !== undefined &&
+    (!input.followerSnapshotId || !input.followerSnapshotObservedAt)
+  ) {
+    throw new Error(
+      'noFollowBackAfterDays exige um snapshot completo de seguidores vinculado ao plano.',
+    );
+  }
+  const preserveFollowBacks = input.preserveFollowBacks || noFollowBackAfterDays !== undefined;
+  const excludeFollowers =
+    input.filters.excludeFollowers === true || noFollowBackAfterDays !== undefined;
   const window = computeUnfollowWindow(input.filters, now);
   const candidates = loadUnfollowCohort(db, {
     localAccountId: input.localAccountId,
@@ -284,10 +325,13 @@ export function freezeUnfollowPlan(
     ...(input.campaignId ? { campaignId: input.campaignId } : {}),
   });
   const options: UnfollowPreviewOptions = {
-    preserveFollowBacks: input.preserveFollowBacks,
+    preserveFollowBacks,
     followBackValidityDays: input.followBackValidityDays,
-    ...(input.filters.excludeFollowers ? { excludeFollowers: true } : {}),
+    ...(excludeFollowers ? { excludeFollowers: true } : {}),
     ...(input.onlyUnattempted ? { onlyUnattempted: true } : {}),
+    ...(input.filters.noFollowBackAfterDays !== undefined
+      ? { noFollowBackAfterDays: input.filters.noFollowBackAfterDays }
+      : {}),
     ...(input.filters.limit ? { limit: input.filters.limit } : {}),
     now,
   };
@@ -301,18 +345,20 @@ export function freezeUnfollowPlan(
       filters: input.filters,
       window: { fromIso: window.fromIso ?? null, toIso: window.toIso ?? null },
       policy: {
-        preserveFollowBacks: input.preserveFollowBacks,
+        preserveFollowBacks,
         followBackValidityDays: input.followBackValidityDays,
         followerSnapshotId: input.followerSnapshotId ?? null,
         followerSnapshotObservedAt: input.followerSnapshotObservedAt ?? null,
+        noFollowBackAfterDays: input.filters.noFollowBackAfterDays ?? null,
       },
       onlyUnattempted: input.onlyUnattempted ?? false,
+      noFollowBackAfterDays: input.filters.noFollowBackAfterDays ?? null,
       usernames: eligible.map((c) => c.username),
     },
     config: {
-      preserveFollowBacks: input.preserveFollowBacks,
+      preserveFollowBacks,
       followBackValidityDays: input.followBackValidityDays,
-      excludeFollowers: input.filters.excludeFollowers ?? false,
+      excludeFollowers,
       onlyUnattempted: input.onlyUnattempted ?? false,
     },
   });

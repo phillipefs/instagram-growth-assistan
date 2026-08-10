@@ -10,6 +10,20 @@ describe('computeUnfollowWindow', () => {
     expect(w.toIso).toBe('2026-07-22T12:00:00.000Z');
   });
 
+  it('janela de ausência de follow-back também exige a idade mínima', () => {
+    const w = computeUnfollowWindow({ noFollowBackAfterDays: 7 }, now);
+    expect(w.fromIso).toBeUndefined();
+    expect(w.toIso).toBe('2026-07-30T12:00:00.000Z');
+    expect(w.label).toBe('sem follow-back após 7 dias');
+  });
+
+  it('rejeita prazo de follow-back inválido ou combinado com olderThanDays', () => {
+    expect(() => computeUnfollowWindow({ noFollowBackAfterDays: 0 }, now)).toThrow();
+    expect(() =>
+      computeUnfollowWindow({ olderThanDays: 7, noFollowBackAfterDays: 7 }, now),
+    ).toThrow();
+  });
+
   it('janela móvel: seguidos nos últimos N dias define o limite inferior', () => {
     const w = computeUnfollowWindow({ followedWithinDays: 7 }, now);
     expect(w.fromIso).toBe('2026-07-30T12:00:00.000Z');
