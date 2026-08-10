@@ -2,6 +2,17 @@
 
 Registro de decisões (ADR resumido). Mais recente no topo.
 
+## ADR-0014 — Conversão consolidada entre campanhas
+
+O comando `metrics` calcula, por conta local, a quantidade de perfis distintos
+seguidos pela ferramenta (`origin = TOOL_CLICK`) e quantos constam como
+seguidores. A quebra por campanha deduplica refollows dentro da campanha; o
+total também deduplica perfis presentes em campanhas diferentes. O snapshot
+completo mais recente é a fonte preferencial e só cobre follows anteriores à
+sua observação. Sem snapshot, são usadas as observações locais de follow-back e
+a cobertura parcial fica explícita; ausência total de inspeção não é mostrada
+como conversão zero.
+
 ## ADR-0013 — Unfollow híbrido pela lista Seguindo
 Perfis cujo ciclo atual está em `FOLLOWING` são pesquisados pelo username exato
 na janela “Seguindo” da conta ativa. A linha só é acionável quando href,

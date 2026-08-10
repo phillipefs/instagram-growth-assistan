@@ -89,18 +89,31 @@ Campos principais:
 
 ## 3. Coletar candidatos
 
-Exemplo para percorrer 20 posts e extrair até 2.000 comentaristas por post,
-encerrando ao alcançar 20.000 candidatos únicos:
+Primeira coleta da campanha: percorre os posts 1 a 20 e extrai até 2.000
+comentaristas por post, encerrando ao alcançar 20.000 candidatos únicos.
+`--skip-posts 0` é opcional porque zero já é o padrão:
 
 ```bash
-npm run dev -- collect --campaign "professor_vicente" --posts 20 --limit 20000 --comments-per-post 2000 --account "appassetlens"
+npm run dev -- collect --campaign "professor_vicente" --skip-posts 0 --posts 20 --limit 20000 --comments-per-post 2000 --account "appassetlens"
 ```
 
-Para continuar a partir do post 21:
+Segunda coleta da mesma campanha: ignora os 20 primeiros posts e percorre os
+posts 21 a 40:
 
 ```bash
 npm run dev -- collect --campaign "professor_vicente" --skip-posts 20 --posts 20 --limit 20000 --comments-per-post 2000 --account "appassetlens"
 ```
+
+Terceira coleta da mesma campanha: ignora os 40 primeiros posts e percorre os
+posts 41 a 60:
+
+```bash
+npm run dev -- collect --campaign "professor_vicente" --skip-posts 40 --posts 20 --limit 20000 --comments-per-post 2000 --account "appassetlens"
+```
+
+`--skip-posts` sempre conta a partir do topo atual do grid do perfil-alvo; a
+campanha não avança esse número automaticamente. Posts fixados também entram
+nessa contagem.
 
 Repetições não duplicam o mesmo candidato nem o mesmo sinal do mesmo post.
 
@@ -191,7 +204,14 @@ Resumo agregado de toda a operação:
 
 ```bash
 npm run dev -- metrics
+npm run dev -- metrics --account "appassetlens"
 ```
+
+O bloco `Conversão de follow por campanha` mostra `seguidos`,
+`seguiram_de_volta` e `conversão` para cada campanha. A linha `TOTAL (pessoas
+únicas)` deduplica quem apareceu em mais de uma campanha. Rode `followers:sync`
+antes para medir contra o snapshot completo mais recente; sem snapshot, o
+relatório usa as observações locais e informa a cobertura disponível.
 
 Relatório da execução mais recente:
 

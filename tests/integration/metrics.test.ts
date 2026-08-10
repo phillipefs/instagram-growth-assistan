@@ -11,6 +11,7 @@ import { ActionAttemptRepo } from '../../src/database/repositories/actions.js';
 import { RunRepo } from '../../src/database/repositories/runs.js';
 import type { ActionState } from '../../src/domain/states.js';
 import { computeMetrics, formatMetrics } from '../../src/workflows/metrics.js';
+import { persistFollowerSnapshot } from '../../src/workflows/sync-followers.js';
 
 let db: SqliteDatabase;
 
@@ -87,7 +88,7 @@ describe('computeMetrics', () => {
       campaignId: campaign.id,
     });
 
-    const metrics = computeMetrics(db);
+    const metrics = computeMetrics(db, account.id);
 
     expect(metrics.campaigns).toHaveLength(1);
     expect(metrics.campaigns[0]?.candidates).toBe(3);
@@ -123,6 +124,28 @@ describe('computeMetrics', () => {
 
     expect(metrics.followBack.YES).toBe(1);
     expect(metrics.followBack.UNKNOWN).toBe(2);
+    expect(metrics.conversion).toMatchObject({
+      account: 'minha_conta',
+      source: 'FOLLOW_BACK_OBSERVATION',
+      observedAt: null,
+      campaigns: [
+        {
+          name: 'C1',
+          followed: 3,
+          followedBack: 1,
+          ratePct: 33.33,
+          inspected: 1,
+          coveragePct: 33.33,
+        },
+      ],
+      total: {
+        followed: 3,
+        followedBack: 1,
+        ratePct: 33.33,
+        inspected: 1,
+        coveragePct: 33.33,
+      },
+    });
   });
 
   it('renderiza texto legível mesmo sem dados', () => {
@@ -153,6 +176,113 @@ describe('computeMetrics', () => {
       unfollowed: 1,
       open: 0,
       total: 1,
+    });
+  });
+
+  it('calcula conversão por campanha e total sem duplicar pessoas entre campanhas', () => {
+    const account = new LocalAccountRepo(db).create({ username: 'conta' });
+    const campaigns = new CampaignRepo(db);
+    const campaignA = campaigns.create({ name: 'Campanha A' });
+    const campaignB = campaigns.create({ name: 'Campanha B' });
+    const profiles = new ProfileRepo(db);
+    const personA = profiles.upsert({ username: 'pessoa_a' });
+    const personB = profiles.upsert({ username: 'pessoa_b' });
+    const personC = profiles.upsert({ username: 'pessoa_c' });
+    const relationships = new RelationshipRepo(db);
+
+    const addFollow = (profileId: string, campaignId: string) => {
+      const relationship = relationships.ensure(account.id, profileId);
+      relationships.createCycle({
+        relationshipId: relationship.id,
+        origin: 'TOOL_CLICK',
+        campaignId,
+        followedAt: '2026-08-09T12:00:00.000Z',
+      });
+    };
+    addFollow(personA.id, campaignA.id);
+    addFollow(personB.id, campaignA.id);
+    addFollow(personB.id, campaignB.id);
+    addFollow(personC.id, campaignB.id);
+
+    persistFollowerSnapshot(db, {
+      localAccountId: account.id,
+      complete: true,
+      expectedCount: 2,
+      loadedCount: 2,
+      usernames: ['pessoa_a', 'pessoa_b'],
+      observedAt: '2026-08-10T12:00:00.000Z',
+      reason: 'lista completa carregada',
+    });
+
+    expect(computeMetrics(db, account.id).conversion).toEqual({
+      account: 'conta',
+      source: 'FOLLOWER_SNAPSHOT',
+      observedAt: '2026-08-10T12:00:00.000Z',
+      campaigns: [
+        {
+          name: 'Campanha A',
+          followed: 2,
+          followedBack: 2,
+          ratePct: 100,
+          inspected: 2,
+          coveragePct: 100,
+        },
+        {
+          name: 'Campanha B',
+          followed: 2,
+          followedBack: 1,
+          ratePct: 50,
+          inspected: 2,
+          coveragePct: 100,
+        },
+      ],
+      total: {
+        followed: 3,
+        followedBack: 2,
+        ratePct: 66.67,
+        inspected: 3,
+        coveragePct: 100,
+      },
+    });
+
+    const text = formatMetrics(computeMetrics(db, account.id));
+    expect(text).toContain(
+      'Campanha A: seguidos=2 seguiram_de_volta=2 conversão=100.00% cobertura=100.00%',
+    );
+    expect(text).toContain(
+      'TOTAL (pessoas únicas): seguidos=3 seguiram_de_volta=2 conversão=66.67%',
+    );
+    expect(text).toContain('Fonte: snapshot completo de seguidores em 2026-08-10T12:00:00.000Z');
+  });
+
+  it('não informa conversão zero quando o snapshot é anterior aos follows', () => {
+    const account = new LocalAccountRepo(db).create({ username: 'conta' });
+    const campaign = new CampaignRepo(db).create({ name: 'Campanha' });
+    persistFollowerSnapshot(db, {
+      localAccountId: account.id,
+      complete: true,
+      expectedCount: 0,
+      loadedCount: 0,
+      usernames: [],
+      observedAt: '2026-08-09T12:00:00.000Z',
+      reason: 'lista completa carregada',
+    });
+
+    const profile = new ProfileRepo(db).upsert({ username: 'pessoa' });
+    const relationship = new RelationshipRepo(db).ensure(account.id, profile.id);
+    new RelationshipRepo(db).createCycle({
+      relationshipId: relationship.id,
+      origin: 'TOOL_CLICK',
+      campaignId: campaign.id,
+      followedAt: '2026-08-10T12:00:00.000Z',
+    });
+
+    expect(computeMetrics(db, account.id).conversion?.total).toEqual({
+      followed: 1,
+      followedBack: 0,
+      ratePct: null,
+      inspected: 0,
+      coveragePct: 0,
     });
   });
 });

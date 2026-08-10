@@ -5,6 +5,7 @@ import { ActionAttemptRepo } from '../../database/repositories/actions.js';
 import { ProfileRepo } from '../../database/repositories/profiles.js';
 import { formatRunReport, type RunReportItem } from '../format/run-report.js';
 import { computeMetrics, formatMetrics } from '../../workflows/metrics.js';
+import { LocalAccountRepo } from '../../database/repositories/accounts.js';
 
 function writeText(text: string): void {
   process.stdout.write(`${text}\n`);
@@ -45,10 +46,20 @@ export function registerReportCommands(program: Command): void {
   program
     .command('metrics')
     .description('Métricas agregadas para o experimento de validação (somente leitura).')
-    .action(() => {
+    .option('--account <username>', 'conta usada na conversão (padrão: a primeira)')
+    .action((options: { account?: string }) => {
       const db = openAppDatabase();
       try {
-        writeText(formatMetrics(computeMetrics(db)));
+        const accounts = new LocalAccountRepo(db);
+        const account = options.account
+          ? accounts.findByUsername(options.account)
+          : accounts.list()[0];
+        if (options.account && !account) {
+          writeText(`Conta local não encontrada: ${options.account}`);
+          process.exitCode = 1;
+          return;
+        }
+        writeText(formatMetrics(computeMetrics(db, account?.id)));
       } finally {
         db.close();
       }

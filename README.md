@@ -213,7 +213,7 @@ plan:create-follow [--only-unattempted]  congela um plano de follow imutável
 plans:list | plans:show --plan        lista/mostra planos (com progresso)
 runs:list | runs:show --run           lista/mostra execuções
 runs:report [--run]                   relatório human-readable de uma execução
-metrics                               métricas agregadas (por estado/campanha)
+metrics [--account]                   métricas e conversão por campanha/total
 follow [--skip-inactive --like]       follow supervisionado (dry-run padrão)
 follow:skip-ambiguous                 libera um follow ambíguo sem repetir o clique
 like-post                             curtida supervisionada de publicação
@@ -227,10 +227,12 @@ unfollow                              unfollow supervisionado (dry-run padrão)
 
 ## Métricas e relatórios
 
-- **`metrics`** — visão agregada (somente leitura): coleta por campanha, desfecho
+- **`metrics [--account <username>]`** — visão agregada (somente leitura): coleta por campanha, desfecho
   das ações, ciclos abertos/fechados, follows **por estado** (seguindo vs
   solicitação) e histórico **por campanha**, inclusive depois de todos os
-  unfollows.
+  unfollows. Também mostra pessoas distintas seguidas, quantas seguem de volta e
+  a conversão percentual por campanha e no total deduplicado. O snapshot completo
+  mais recente de seguidores é a fonte preferencial.
 - **`campaign:summary --campaign "<nome>"`** — candidatos, follows atuais,
   histórico de unfollow, seguidores atuais vindos da campanha e conversão. Com
   snapshots antes e depois do follow, também separa novos seguidores com

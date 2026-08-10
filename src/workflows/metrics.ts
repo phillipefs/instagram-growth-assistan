@@ -1,4 +1,5 @@
 import type { SqliteDatabase } from '../database/connection.js';
+import { FollowerSnapshotRepo } from '../database/repositories/follower-snapshots.js';
 
 export interface CampaignMetric {
   readonly name: string;
@@ -31,6 +32,27 @@ export interface CampaignFollowMetric {
   readonly total: number;
 }
 
+export interface ConversionMetric {
+  readonly name: string;
+  /** Pessoas distintas com follow confirmado pela ferramenta. */
+  readonly followed: number;
+  /** Pessoas seguidas pela ferramenta que aparecem como seguidoras. */
+  readonly followedBack: number;
+  readonly ratePct: number | null;
+  /** Pessoas cuja condição de seguidor foi verificada pela fonte usada. */
+  readonly inspected: number;
+  readonly coveragePct: number | null;
+}
+
+export interface ConversionMetrics {
+  readonly account: string;
+  readonly source: 'FOLLOWER_SNAPSHOT' | 'FOLLOW_BACK_OBSERVATION';
+  readonly observedAt: string | null;
+  readonly campaigns: ConversionMetric[];
+  /** Consolidado de pessoas únicas, sem somar duplicatas entre campanhas. */
+  readonly total: Omit<ConversionMetric, 'name'>;
+}
+
 export interface Metrics {
   readonly campaigns: CampaignMetric[];
   readonly runsByType: Record<string, number>;
@@ -39,6 +61,7 @@ export interface Metrics {
   readonly openFollowsByState: Record<string, number>;
   readonly followsByCampaign: CampaignFollowMetric[];
   readonly followBack: Record<string, number>;
+  readonly conversion: ConversionMetrics | null;
 }
 
 /**
@@ -46,7 +69,7 @@ export interface Metrics {
  * coleta por campanha/fonte, execuções por tipo, desfecho das ações, ciclos
  * abertos/fechados por origem e distribuição de follow-back.
  */
-export function computeMetrics(db: SqliteDatabase): Metrics {
+export function computeMetrics(db: SqliteDatabase, localAccountId?: string): Metrics {
   const campaignRows = db
     .prepare(
       `SELECT c.name AS name, cc.discovery_source AS source, COUNT(*) AS n
@@ -200,6 +223,8 @@ export function computeMetrics(db: SqliteDatabase): Metrics {
     }),
   );
 
+  const conversion = localAccountId ? computeConversionMetrics(db, localAccountId) : null;
+
   return {
     campaigns,
     runsByType,
@@ -208,7 +233,134 @@ export function computeMetrics(db: SqliteDatabase): Metrics {
     openFollowsByState,
     followsByCampaign,
     followBack,
+    conversion,
   };
+}
+
+interface ConversionCycleRow {
+  readonly campaign_id: string;
+  readonly profile_id: string;
+  readonly followed_at: string | null;
+  readonly follow_back: string;
+  readonly follow_back_checked_at: string | null;
+}
+
+function computeConversionMetrics(
+  db: SqliteDatabase,
+  localAccountId: string,
+): ConversionMetrics | null {
+  const account = db
+    .prepare('SELECT username FROM local_accounts WHERE id = ?')
+    .get(localAccountId) as { username: string } | undefined;
+  if (!account) return null;
+
+  const campaignRows = db.prepare('SELECT id, name FROM campaigns ORDER BY name').all() as {
+    id: string;
+    name: string;
+  }[];
+  const cycleRows = db
+    .prepare(
+      `SELECT rc.campaign_id, r.profile_id, rc.followed_at, rc.follow_back,
+              rc.follow_back_checked_at
+         FROM relationship_cycles rc
+         JOIN relationships r ON r.id = rc.relationship_id
+        WHERE r.local_account_id = ?
+          AND rc.campaign_id IS NOT NULL
+          AND rc.origin = 'TOOL_CLICK'
+          AND rc.followed_by_tool = 1
+        ORDER BY rc.created_at, rc.id`,
+    )
+    .all(localAccountId) as ConversionCycleRow[];
+
+  const profilesByCampaign = new Map<string, Set<string>>();
+  const observationByCampaign = new Map<string, Map<string, ConversionCycleRow>>();
+  const firstFollowByCampaign = new Map<string, Map<string, string | null>>();
+  const allProfiles = new Set<string>();
+  const latestObservationByProfile = new Map<string, ConversionCycleRow>();
+  const firstFollowByProfile = new Map<string, string | null>();
+  for (const row of cycleRows) {
+    const profiles = profilesByCampaign.get(row.campaign_id) ?? new Set<string>();
+    profiles.add(row.profile_id);
+    profilesByCampaign.set(row.campaign_id, profiles);
+
+    const observations = observationByCampaign.get(row.campaign_id) ?? new Map();
+    observations.set(row.profile_id, row);
+    observationByCampaign.set(row.campaign_id, observations);
+
+    const campaignFollows = firstFollowByCampaign.get(row.campaign_id) ?? new Map();
+    if (!campaignFollows.has(row.profile_id)) {
+      campaignFollows.set(row.profile_id, row.followed_at);
+    }
+    firstFollowByCampaign.set(row.campaign_id, campaignFollows);
+
+    allProfiles.add(row.profile_id);
+    latestObservationByProfile.set(row.profile_id, row);
+    if (!firstFollowByProfile.has(row.profile_id)) {
+      firstFollowByProfile.set(row.profile_id, row.followed_at);
+    }
+  }
+
+  const snapshots = new FollowerSnapshotRepo(db);
+  const latestSnapshot = snapshots.latestComplete(localAccountId);
+  const snapshotMembers = latestSnapshot
+    ? snapshots.memberProfileIds(latestSnapshot.id)
+    : undefined;
+
+  const summarize = (
+    profiles: ReadonlySet<string>,
+    observations: ReadonlyMap<string, ConversionCycleRow>,
+    firstFollows: ReadonlyMap<string, string | null>,
+  ): Omit<ConversionMetric, 'name'> => {
+    let followedBack = 0;
+    let inspected = 0;
+    for (const profileId of profiles) {
+      if (snapshotMembers) {
+        const followedAt = firstFollows.get(profileId);
+        if (
+          followedAt &&
+          latestSnapshot &&
+          Date.parse(latestSnapshot.observedAt) >= Date.parse(followedAt)
+        ) {
+          inspected += 1;
+          if (snapshotMembers.has(profileId)) followedBack += 1;
+        }
+        continue;
+      }
+      const observation = observations.get(profileId);
+      if (observation?.follow_back_checked_at) {
+        inspected += 1;
+        if (observation.follow_back === 'YES') followedBack += 1;
+      }
+    }
+    return {
+      followed: profiles.size,
+      followedBack,
+      ratePct:
+        profiles.size === 0 || inspected === 0 ? null : percentage(followedBack, profiles.size),
+      inspected,
+      coveragePct: percentage(inspected, profiles.size),
+    };
+  };
+
+  return {
+    account: account.username,
+    source: snapshotMembers ? 'FOLLOWER_SNAPSHOT' : 'FOLLOW_BACK_OBSERVATION',
+    observedAt: latestSnapshot?.observedAt ?? null,
+    campaigns: campaignRows.map((campaign) => ({
+      name: campaign.name,
+      ...summarize(
+        profilesByCampaign.get(campaign.id) ?? new Set<string>(),
+        observationByCampaign.get(campaign.id) ?? new Map<string, ConversionCycleRow>(),
+        firstFollowByCampaign.get(campaign.id) ?? new Map<string, string | null>(),
+      ),
+    })),
+    total: summarize(allProfiles, latestObservationByProfile, firstFollowByProfile),
+  };
+}
+
+function percentage(numerator: number, denominator: number): number | null {
+  if (denominator === 0) return null;
+  return Math.round((numerator / denominator) * 10_000) / 100;
 }
 
 /** Renderiza as métricas do experimento como texto legível. */
@@ -292,6 +444,25 @@ export function formatMetrics(metrics: Metrics): string {
   }
 
   lines.push('');
+  lines.push('Conversão de follow por campanha:');
+  if (!metrics.conversion) {
+    lines.push('  (nenhuma conta local para calcular a conversão)');
+  } else {
+    lines.push(`  Conta: ${metrics.conversion.account}`);
+    for (const campaign of metrics.conversion.campaigns) {
+      lines.push(formatConversionLine(campaign.name, campaign));
+    }
+    lines.push(formatConversionLine('TOTAL (pessoas únicas)', metrics.conversion.total));
+    if (metrics.conversion.source === 'FOLLOWER_SNAPSHOT') {
+      lines.push(`  Fonte: snapshot completo de seguidores em ${metrics.conversion.observedAt}`);
+    } else {
+      lines.push(
+        '  Fonte: observações locais de follow-back (pode haver perfis não inspecionados)',
+      );
+    }
+  }
+
+  lines.push('');
   lines.push('Follow-back observado:');
   const fb = Object.entries(metrics.followBack);
   if (fb.length === 0) {
@@ -303,4 +474,11 @@ export function formatMetrics(metrics: Metrics): string {
   }
 
   return lines.join('\n');
+}
+
+function formatConversionLine(label: string, metric: Omit<ConversionMetric, 'name'>): string {
+  const rate = metric.ratePct === null ? 'indisponível' : `${metric.ratePct.toFixed(2)}%`;
+  const coverage =
+    metric.coveragePct === null ? 'sem follows' : `${metric.coveragePct.toFixed(2)}%`;
+  return `  ${label}: seguidos=${metric.followed} seguiram_de_volta=${metric.followedBack} conversão=${rate} cobertura=${coverage}`;
 }
