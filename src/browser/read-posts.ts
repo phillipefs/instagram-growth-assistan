@@ -312,15 +312,97 @@ function expectedLikersFromText(text: string): number | null {
   );
   const otherPeople = othersToken?.[1] ?? othersToken?.[2];
   const parsedOthers = otherPeople ? parseCountToken(otherPeople) : null;
-  return parsedOthers === null ? null : parsedOthers + 1;
+  if (parsedOthers !== null) {
+    return parsedOthers + 1;
+  }
+  const bareToken = normalized.match(/^([0-9][0-9.,]*(?:\s*(?:k|m|mil|mi))?)$/i)?.[1];
+  return bareToken ? parseCountToken(bareToken) : null;
+}
+
+interface CurrentPostRoute {
+  readonly kind: 'p' | 'reel';
+  readonly shortcode: string;
+}
+
+function currentPostRoute(page: Page): CurrentPostRoute | null {
+  const match = currentPathname(page).match(/^\/(p|reel)\/([^/]+)\/?$/i);
+  if (!match) {
+    return null;
+  }
+  const kind = match[1];
+  const shortcode = match[2];
+  if (!kind || !shortcode) {
+    return null;
+  }
+  return { kind: kind.toLowerCase() as CurrentPostRoute['kind'], shortcode };
+}
+
+function isCurrentPostLikersHref(href: string | null, route: CurrentPostRoute): boolean {
+  if (!href) {
+    return false;
+  }
+  try {
+    const pathname = new URL(href, 'https://www.instagram.com').pathname;
+    return pathname.toLowerCase() === `/${route.kind}/${route.shortcode}/liked_by/`.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+async function hasNearbyLikeControl(candidate: Locator): Promise<boolean> {
+  return candidate
+    .evaluate((element) => {
+      let ancestor = element.parentElement;
+      for (let depth = 0; ancestor && depth < 4; depth += 1) {
+        const labels = [...ancestor.querySelectorAll('svg[aria-label]')].map(
+          (svg) => svg.getAttribute('aria-label') ?? '',
+        );
+        if (labels.some((label) => /^(like|unlike|curtir|descurtir)$/i.test(label.trim()))) {
+          return true;
+        }
+        ancestor = ancestor.parentElement;
+      }
+      return false;
+    })
+    .catch(() => false);
+}
+
+async function findPrimaryPostCount(page: Page): Promise<Locator | null> {
+  const article = page.locator('article').first();
+  const root = (await article.count()) > 0 ? article : page.locator('main').first();
+  const candidates = root.locator('button, [role="button"]');
+
+  // O layout atual mostra apenas o número (por exemplo, "329") ao lado do
+  // coração. Ele deve ter prioridade sobre "2 curtidas" de um comentário.
+  for (let index = 0; index < (await candidates.count()); index += 1) {
+    const candidate = candidates.nth(index);
+    if (!(await candidate.isVisible().catch(() => false))) {
+      continue;
+    }
+    const text = ((await candidate.textContent().catch(() => '')) ?? '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (
+      /^[0-9][0-9.,]*(?:\s*(?:k|m|mil|mi))?$/i.test(text) &&
+      (await hasNearbyLikeControl(candidate))
+    ) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 async function findLikersTrigger(page: Page): Promise<Locator | null> {
+  const route = currentPostRoute(page);
   const exactLink = page.locator('a[href$="/liked_by/"]');
   let fallback: Locator | null = null;
   for (let index = 0; index < (await exactLink.count()); index += 1) {
     const candidate = exactLink.nth(index);
     if (!(await candidate.isVisible().catch(() => false))) {
+      continue;
+    }
+    if (route && !isCurrentPostLikersHref(await candidate.getAttribute('href'), route)) {
       continue;
     }
     fallback ??= candidate;
@@ -335,6 +417,12 @@ async function findLikersTrigger(page: Page): Promise<Locator | null> {
   }
   if (fallback) {
     return fallback;
+  }
+
+  if (route) {
+    // Na página real, nunca cai para botões de comentários ou de posts
+    // relacionados. Se a contagem principal não for reconhecida, falha fechada.
+    return findPrimaryPostCount(page);
   }
 
   const candidates = page.locator(postLocators.likersTrigger);

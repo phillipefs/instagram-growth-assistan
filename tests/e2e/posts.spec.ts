@@ -100,6 +100,56 @@ test('lê curtidores quando acessíveis', async ({ page }) => {
   expect(likers.usernames).toEqual(['liker_one', 'liker_two']);
 });
 
+test('prioriza a contagem numérica do post sobre curtidas de comentário', async ({ page }) => {
+  await page.route('https://www.instagram.com/p/POST123/', async (route) => {
+    await route.fulfill({
+      contentType: 'text/html',
+      body: `
+        <article>
+          <div id="comment-likes" role="button">3 curtidas</div>
+          <div id="post-actions">
+            <span role="button"><svg aria-label="Curtir"></svg></span>
+            <span id="post-likes" role="button">4</span>
+          </div>
+        </article>
+        <div id="comment-dialog" data-testid="likers-dialog" role="dialog" hidden>
+          <h2>Curtidas</h2>
+          <a href="/comment_liker_a/">A</a>
+          <a href="/comment_liker_b/">B</a>
+          <a href="/comment_liker_c/">C</a>
+        </div>
+        <div id="post-dialog" data-testid="likers-dialog" role="dialog" hidden>
+          <h2>Curtidas</h2>
+          <a href="/post_liker_a/">A</a>
+          <a href="/post_liker_b/">B</a>
+          <a href="/post_liker_c/">C</a>
+          <a href="/post_liker_d/">D</a>
+        </div>
+        <script>
+          document.querySelector('#comment-likes').addEventListener('click', () => {
+            document.querySelector('#comment-dialog').hidden = false;
+          });
+          document.querySelector('#post-likes').addEventListener('click', () => {
+            document.querySelector('#post-dialog').hidden = false;
+          });
+        </script>
+      `,
+    });
+  });
+  await page.goto('https://www.instagram.com/p/POST123/');
+
+  const likers = await readPostLikers(page, 10);
+  expect(likers.accessible).toBe(true);
+  expect(likers.complete).toBe(true);
+  expect(likers.expectedCount).toBe(4);
+  expect(likers.usernames).toEqual([
+    'post_liker_a',
+    'post_liker_b',
+    'post_liker_c',
+    'post_liker_d',
+  ]);
+});
+
 test('abre o diálogo e carrega todos os 188 curtidores por rolagem', async ({ page }) => {
   await page.setContent(`
     <main>
