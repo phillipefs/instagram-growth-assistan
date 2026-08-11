@@ -210,7 +210,7 @@ session:clear --confirm  apaga o perfil local do navegador
 inspect-profile --url  reconhece um perfil (somente leitura)
 
 # coleta / plano / execução
-collect [--skip-posts] [--comments-per-post] [--likers]  coleta candidatos (leitura)
+collect [--skip-posts] [--comments-per-post] [--likers] [--likers-per-post]  coleta candidatos (leitura)
 plan-follow                           prévia dry-run ordenada por engajamento
 plan:create-follow [--only-unattempted]  congela um plano de follow imutável
 plans:list | plans:show --plan        lista/mostra planos (com progresso)

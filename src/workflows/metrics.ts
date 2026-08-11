@@ -46,7 +46,7 @@ export interface ConversionMetric {
 
 export interface ConversionMetrics {
   readonly account: string;
-  readonly source: 'FOLLOWER_SNAPSHOT' | 'FOLLOW_BACK_OBSERVATION';
+  readonly source: 'FOLLOWER_SNAPSHOT' | 'FOLLOWER_SNAPSHOT_TOLERATED' | 'FOLLOW_BACK_OBSERVATION';
   readonly observedAt: string | null;
   readonly campaigns: ConversionMetric[];
   /** Consolidado de pessoas únicas, sem somar duplicatas entre campanhas. */
@@ -61,6 +61,13 @@ export interface Metrics {
   readonly openFollowsByState: Record<string, number>;
   readonly followsByCampaign: CampaignFollowMetric[];
   readonly followBack: Record<string, number>;
+  readonly followBackSnapshot: {
+    readonly status: 'COMPLETE' | 'TOLERATED';
+    readonly observedAt: string;
+    readonly expectedCount: number | null;
+    readonly loadedCount: number;
+    readonly coveragePct: number | null;
+  } | null;
   readonly conversion: ConversionMetrics | null;
 }
 
@@ -153,11 +160,38 @@ export function computeMetrics(db: SqliteDatabase, localAccountId?: string): Met
     closed: e.closed,
   }));
 
-  const followBackRows = db
-    .prepare(
-      'SELECT follow_back AS fb, COUNT(*) AS n FROM relationship_cycles GROUP BY follow_back',
-    )
-    .all() as { fb: string; n: number }[];
+  const acceptedSnapshot = localAccountId
+    ? new FollowerSnapshotRepo(db).latestAccepted(localAccountId)
+    : undefined;
+  const followBackRows = acceptedSnapshot
+    ? (db
+        .prepare(
+          `SELECT CASE
+                    WHEN julianday(COALESCE(rc.followed_at, rc.created_at)) > julianday(@observed)
+                      THEN 'UNKNOWN'
+                    WHEN EXISTS (
+                      SELECT 1 FROM follower_snapshot_members member
+                       WHERE member.snapshot_id = @snapshot
+                         AND member.profile_id = r.profile_id
+                    ) THEN 'YES'
+                    ELSE 'NO'
+                  END AS fb,
+                  COUNT(*) AS n
+             FROM relationship_cycles rc
+             JOIN relationships r ON r.id = rc.relationship_id
+            WHERE r.local_account_id = @account
+            GROUP BY fb`,
+        )
+        .all({
+          snapshot: acceptedSnapshot.id,
+          account: localAccountId,
+          observed: acceptedSnapshot.observedAt,
+        }) as { fb: string; n: number }[])
+    : (db
+        .prepare(
+          'SELECT follow_back AS fb, COUNT(*) AS n FROM relationship_cycles GROUP BY follow_back',
+        )
+        .all() as { fb: string; n: number }[]);
   const followBack: Record<string, number> = {};
   for (const row of followBackRows) {
     followBack[row.fb] = row.n;
@@ -224,6 +258,18 @@ export function computeMetrics(db: SqliteDatabase, localAccountId?: string): Met
   );
 
   const conversion = localAccountId ? computeConversionMetrics(db, localAccountId) : null;
+  const followBackSnapshot = acceptedSnapshot
+    ? {
+        status: acceptedSnapshot.status as 'COMPLETE' | 'TOLERATED',
+        observedAt: acceptedSnapshot.observedAt,
+        expectedCount: acceptedSnapshot.expectedCount,
+        loadedCount: acceptedSnapshot.loadedCount,
+        coveragePct:
+          acceptedSnapshot.expectedCount === null || acceptedSnapshot.expectedCount === 0
+            ? null
+            : percentage(acceptedSnapshot.loadedCount, acceptedSnapshot.expectedCount),
+      }
+    : null;
 
   return {
     campaigns,
@@ -233,6 +279,7 @@ export function computeMetrics(db: SqliteDatabase, localAccountId?: string): Met
     openFollowsByState,
     followsByCampaign,
     followBack,
+    followBackSnapshot,
     conversion,
   };
 }
@@ -301,7 +348,7 @@ function computeConversionMetrics(
   }
 
   const snapshots = new FollowerSnapshotRepo(db);
-  const latestSnapshot = snapshots.latestComplete(localAccountId);
+  const latestSnapshot = snapshots.latestAccepted(localAccountId);
   const snapshotMembers = latestSnapshot
     ? snapshots.memberProfileIds(latestSnapshot.id)
     : undefined;
@@ -344,7 +391,11 @@ function computeConversionMetrics(
 
   return {
     account: account.username,
-    source: snapshotMembers ? 'FOLLOWER_SNAPSHOT' : 'FOLLOW_BACK_OBSERVATION',
+    source: snapshotMembers
+      ? latestSnapshot?.status === 'TOLERATED'
+        ? 'FOLLOWER_SNAPSHOT_TOLERATED'
+        : 'FOLLOWER_SNAPSHOT'
+      : 'FOLLOW_BACK_OBSERVATION',
     observedAt: latestSnapshot?.observedAt ?? null,
     campaigns: campaignRows.map((campaign) => ({
       name: campaign.name,
@@ -455,6 +506,10 @@ export function formatMetrics(metrics: Metrics): string {
     lines.push(formatConversionLine('TOTAL (pessoas únicas)', metrics.conversion.total));
     if (metrics.conversion.source === 'FOLLOWER_SNAPSHOT') {
       lines.push(`  Fonte: snapshot completo de seguidores em ${metrics.conversion.observedAt}`);
+    } else if (metrics.conversion.source === 'FOLLOWER_SNAPSHOT_TOLERATED') {
+      lines.push(
+        `  Fonte: snapshot tolerado de seguidores em ${metrics.conversion.observedAt} (margem de até 1% aceita para métricas)`,
+      );
     } else {
       lines.push(
         '  Fonte: observações locais de follow-back (pode haver perfis não inspecionados)',
@@ -464,6 +519,14 @@ export function formatMetrics(metrics: Metrics): string {
 
   lines.push('');
   lines.push('Follow-back observado:');
+  if (metrics.followBackSnapshot) {
+    const snapshot = metrics.followBackSnapshot;
+    const coverage =
+      snapshot.coveragePct === null ? 'indisponível' : `${snapshot.coveragePct.toFixed(2)}%`;
+    lines.push(
+      `  Fonte: snapshot ${snapshot.status} em ${snapshot.observedAt} (${snapshot.loadedCount}/${snapshot.expectedCount ?? '?'}, cobertura da lista=${coverage})`,
+    );
+  }
   const fb = Object.entries(metrics.followBack);
   if (fb.length === 0) {
     lines.push('  (nenhuma observação)');

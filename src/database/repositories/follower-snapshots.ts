@@ -1,7 +1,7 @@
 import type { SqliteDatabase } from '../connection.js';
 import { newId, nowIso } from '../util.js';
 
-export type FollowerSnapshotStatus = 'COMPLETE' | 'INCOMPLETE';
+export type FollowerSnapshotStatus = 'COMPLETE' | 'TOLERATED' | 'INCOMPLETE';
 
 export interface FollowerSnapshot {
   readonly id: string;
@@ -68,7 +68,7 @@ export class FollowerSnapshotRepo {
         input.expectedCount,
         input.loadedCount,
         input.observedAt,
-        input.status === 'COMPLETE' ? input.observedAt : null,
+        input.status !== 'INCOMPLETE' ? input.observedAt : null,
         input.failureReason ?? null,
         createdAt,
       );
@@ -76,9 +76,8 @@ export class FollowerSnapshotRepo {
   }
 
   get(id: string): FollowerSnapshot | undefined {
-    const row = this.db
-      .prepare('SELECT * FROM follower_snapshots WHERE id = ?')
-      .get(id) as SnapshotRow | undefined;
+    const row = this.db.prepare('SELECT * FROM follower_snapshots WHERE id = ?').get(id) as
+      SnapshotRow | undefined;
     return row ? mapSnapshot(row) : undefined;
   }
 
@@ -93,6 +92,19 @@ export class FollowerSnapshotRepo {
       .prepare(
         `SELECT * FROM follower_snapshots
           WHERE local_account_id = ? AND status = 'COMPLETE'
+          ORDER BY observed_at DESC, created_at DESC
+          LIMIT 1`,
+      )
+      .get(localAccountId) as SnapshotRow | undefined;
+    return row ? mapSnapshot(row) : undefined;
+  }
+
+  /** Snapshot mais recente aceito para planejamento: exato ou dentro da tolerância. */
+  latestAccepted(localAccountId: string): FollowerSnapshot | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM follower_snapshots
+          WHERE local_account_id = ? AND status IN ('COMPLETE', 'TOLERATED')
           ORDER BY observed_at DESC, created_at DESC
           LIMIT 1`,
       )
@@ -123,11 +135,7 @@ export class FollowerSnapshotRepo {
     return rows.map(mapSnapshot);
   }
 
-  addMember(input: {
-    snapshotId: string;
-    profileId: string;
-    observedUsername: string;
-  }): void {
+  addMember(input: { snapshotId: string; profileId: string; observedUsername: string }): void {
     this.db
       .prepare(
         `INSERT OR IGNORE INTO follower_snapshot_members
@@ -155,7 +163,11 @@ export class FollowerSnapshotRepo {
   }
 
   /** Atualiza o cache de follow-back dos ciclos abertos a partir do snapshot completo. */
-  materializeOpenFollowBacks(snapshotId: string, localAccountId: string, observedAt: string): number {
+  materializeOpenFollowBacks(
+    snapshotId: string,
+    localAccountId: string,
+    observedAt: string,
+  ): number {
     const result = this.db
       .prepare(
         `UPDATE relationship_cycles AS rc
@@ -174,6 +186,40 @@ export class FollowerSnapshotRepo {
               SELECT 1 FROM relationships owner_relationship
                WHERE owner_relationship.id = rc.relationship_id
                  AND owner_relationship.local_account_id = @account
+            )`,
+      )
+      .run({ snapshot: snapshotId, account: localAccountId, observed: observedAt });
+    return result.changes;
+  }
+
+  /**
+   * Em snapshot tolerado, confirma apenas presenças. Ausências não são
+   * reclassificadas nem têm a observação renovada.
+   */
+  materializeToleratedOpenFollowBacks(
+    snapshotId: string,
+    localAccountId: string,
+    observedAt: string,
+  ): number {
+    const result = this.db
+      .prepare(
+        `UPDATE relationship_cycles AS rc
+            SET follow_back = 'YES',
+                follow_back_checked_at = @observed,
+                updated_at = @observed
+          WHERE rc.unfollowed_at IS NULL
+            AND EXISTS (
+              SELECT 1 FROM relationships owner_relationship
+               WHERE owner_relationship.id = rc.relationship_id
+                 AND owner_relationship.local_account_id = @account
+            )
+            AND EXISTS (
+              SELECT 1
+                FROM relationships member_relationship
+                JOIN follower_snapshot_members member
+                  ON member.profile_id = member_relationship.profile_id
+               WHERE member_relationship.id = rc.relationship_id
+                 AND member.snapshot_id = @snapshot
             )`,
       )
       .run({ snapshot: snapshotId, account: localAccountId, observed: observedAt });

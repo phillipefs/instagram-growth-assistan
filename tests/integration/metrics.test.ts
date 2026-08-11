@@ -285,4 +285,55 @@ describe('computeMetrics', () => {
       coveragePct: 0,
     });
   });
+
+  it('usa o snapshot tolerado mais recente para métricas YES/NO e informa a fonte', () => {
+    const account = new LocalAccountRepo(db).create({ username: 'conta' });
+    const campaign = new CampaignRepo(db).create({ name: 'Campanha tolerada' });
+    const profiles = new ProfileRepo(db);
+    const relationships = new RelationshipRepo(db);
+    const followsBack = profiles.upsert({ username: 'member_000' });
+    const doesNotFollowBack = profiles.upsert({ username: 'fora_da_lista' });
+    for (const profile of [followsBack, doesNotFollowBack]) {
+      relationships.createCycle({
+        relationshipId: relationships.ensure(account.id, profile.id).id,
+        origin: 'TOOL_CLICK',
+        campaignId: campaign.id,
+        followedAt: '2026-08-10T12:00:00.000Z',
+      });
+    }
+
+    persistFollowerSnapshot(db, {
+      localAccountId: account.id,
+      complete: false,
+      expectedCount: 100,
+      loadedCount: 99,
+      usernames: Array.from(
+        { length: 99 },
+        (_, index) => `member_${String(index).padStart(3, '0')}`,
+      ),
+      observedAt: '2026-08-11T12:00:00.000Z',
+      reason: 'lista incompleta (99/100)',
+    });
+
+    const metrics = computeMetrics(db, account.id);
+    expect(metrics.followBack).toEqual({ NO: 1, YES: 1 });
+    expect(metrics.followBackSnapshot).toEqual({
+      status: 'TOLERATED',
+      observedAt: '2026-08-11T12:00:00.000Z',
+      expectedCount: 100,
+      loadedCount: 99,
+      coveragePct: 99,
+    });
+    expect(metrics.conversion?.total).toEqual({
+      followed: 2,
+      followedBack: 1,
+      ratePct: 50,
+      inspected: 2,
+      coveragePct: 100,
+    });
+    expect(metrics.conversion?.source).toBe('FOLLOWER_SNAPSHOT_TOLERATED');
+    expect(formatMetrics(metrics)).toContain(
+      'Fonte: snapshot tolerado de seguidores em 2026-08-11T12:00:00.000Z',
+    );
+  });
 });

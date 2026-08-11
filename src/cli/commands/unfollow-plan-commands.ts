@@ -97,10 +97,10 @@ function latestFreshFollowerSnapshot(
   localAccountId: string,
   validityDays: number,
 ): { snapshot?: FollowerSnapshot; error?: string } {
-  const snapshot = new FollowerSnapshotRepo(db).latestComplete(localAccountId);
+  const snapshot = new FollowerSnapshotRepo(db).latestAccepted(localAccountId);
   if (!snapshot) {
     return {
-      error: 'Nenhum snapshot completo de seguidores. Rode followers:sync antes do planejamento.',
+      error: 'Nenhum snapshot aceito de seguidores. Rode followers:sync antes do planejamento.',
     };
   }
   if (!isObservationFresh(snapshot.observedAt, validityDays)) {

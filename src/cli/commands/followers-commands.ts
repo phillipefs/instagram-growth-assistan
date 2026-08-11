@@ -6,7 +6,11 @@ import { LocalAccountRepo } from '../../database/repositories/accounts.js';
 import { FollowerSnapshotRepo } from '../../database/repositories/follower-snapshots.js';
 import { ProfileRepo } from '../../database/repositories/profiles.js';
 import { canonicalUsername } from '../../database/util.js';
-import { persistFollowerSnapshot } from '../../workflows/sync-followers.js';
+import {
+  FOLLOWER_SNAPSHOT_TOLERANCE_PCT,
+  isWithinFollowerSnapshotTolerance,
+  persistFollowerSnapshot,
+} from '../../workflows/sync-followers.js';
 
 function write(payload: unknown): void {
   process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
@@ -75,17 +79,23 @@ export function registerFollowersCommands(program: Command): void {
           profile.assessment.followersCount,
         );
         if (options.dryRun) {
+          const acceptedByTolerance = isWithinFollowerSnapshotTolerance(
+            list.expectedCount,
+            list.loadedCount,
+          );
           write({
-            ok: list.complete,
+            ok: list.complete || acceptedByTolerance,
             dryRun: true,
             account: account.username,
             observedAt,
             expectedCount: list.expectedCount,
             loadedCount: list.loadedCount,
             complete: list.complete,
+            acceptedByTolerance,
+            tolerancePct: FOLLOWER_SNAPSHOT_TOLERANCE_PCT,
             reason: list.reason,
           });
-          if (!list.complete) process.exitCode = 1;
+          if (!list.complete && !acceptedByTolerance) process.exitCode = 1;
           return;
         }
 
@@ -99,7 +109,7 @@ export function registerFollowersCommands(program: Command): void {
           reason: list.reason,
         });
         write({
-          ok: result.snapshot.status === 'COMPLETE',
+          ok: result.snapshot.status !== 'INCOMPLETE',
           account: account.username,
           snapshotId: result.snapshot.id,
           status: result.snapshot.status,
@@ -108,9 +118,11 @@ export function registerFollowersCommands(program: Command): void {
           loadedCount: result.snapshot.loadedCount,
           membersStored: result.membersStored,
           relationshipCyclesUpdated: result.relationshipCyclesUpdated,
+          acceptedByTolerance: result.acceptedByTolerance,
+          tolerancePct: FOLLOWER_SNAPSHOT_TOLERANCE_PCT,
           failureReason: result.snapshot.failureReason,
         });
-        if (result.snapshot.status !== 'COMPLETE') process.exitCode = 1;
+        if (result.snapshot.status === 'INCOMPLETE') process.exitCode = 1;
       } finally {
         await session?.close().catch(() => undefined);
         db.close();
@@ -137,22 +149,29 @@ export function registerFollowersCommands(program: Command): void {
         }
         const snapshots = new FollowerSnapshotRepo(db);
         const latest = snapshots.latestComplete(account.id);
+        const latestAccepted = snapshots.latestAccepted(account.id);
         const checkedProfile = options.check
           ? new ProfileRepo(db).findByUsername(options.check)
           : undefined;
         write({
           account: account.username,
           latestComplete: latest ?? null,
+          latestAccepted: latestAccepted ?? null,
           ...(options.check
             ? {
                 check: {
                   username: canonicalUsername(options.check),
                   isFollower:
-                    latest !== undefined &&
+                    latestAccepted !== undefined &&
                     checkedProfile !== undefined &&
-                    snapshots.isMember(latest.id, checkedProfile.id),
-                  snapshotId: latest?.id ?? null,
-                  observedAt: latest?.observedAt ?? null,
+                    snapshots.isMember(latestAccepted.id, checkedProfile.id)
+                      ? true
+                      : latestAccepted?.status === 'COMPLETE'
+                        ? false
+                        : null,
+                  snapshotId: latestAccepted?.id ?? null,
+                  snapshotStatus: latestAccepted?.status ?? null,
+                  observedAt: latestAccepted?.observedAt ?? null,
                 },
               }
             : {}),

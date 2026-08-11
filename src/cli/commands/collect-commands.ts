@@ -12,6 +12,7 @@ import {
   collectFromTarget,
   commentLoadRoundsFor,
   normalizeCommentsPerPost,
+  normalizeLikersPerPost,
 } from '../../workflows/collect-browser.js';
 import { logger } from '../../observability/logger.js';
 
@@ -28,7 +29,8 @@ export function registerCollectCommands(program: Command): void {
     .option('--posts <n>', 'máximo de publicações recentes a abrir', '6')
     .option('--skip-posts <n>', 'pula os primeiros N posts do grid (ex.: fixados)', '0')
     .option('--comments-per-post <n>', 'máximo de comentaristas extraídos por post', '80')
-    .option('--likers', 'também tentar curtidores (best-effort; muitas vezes oculto)')
+    .option('--likers', 'também abrir e percorrer a lista de curtidores')
+    .option('--likers-per-post <n>', 'máximo de curtidores lidos por post (padrão: --limit)')
     .option('--account <username>', 'conta local esperada para validação')
     .action(
       async (options: {
@@ -38,6 +40,7 @@ export function registerCollectCommands(program: Command): void {
         skipPosts: string;
         commentsPerPost: string;
         likers?: boolean;
+        likersPerPost?: string;
         account?: string;
       }) => {
         const db = openAppDatabase();
@@ -69,17 +72,32 @@ export function registerCollectCommands(program: Command): void {
             return;
           }
           const commentsPerPost = normalizeCommentsPerPost(requestedCommentsPerPost);
+          const requestedLikersPerPost =
+            options.likersPerPost === undefined
+              ? undefined
+              : Number.parseInt(options.likersPerPost, 10);
+          if (
+            requestedLikersPerPost !== undefined &&
+            (!Number.isFinite(requestedLikersPerPost) || requestedLikersPerPost <= 0)
+          ) {
+            write({ error: '--likers-per-post exige um inteiro positivo.' });
+            process.exitCode = 1;
+            return;
+          }
+          const collectLimit = Number.parseInt(options.limit, 10);
+          const likersPerPost = normalizeLikersPerPost(requestedLikersPerPost, collectLimit);
 
           const session = await BrowserSession.open({ visible: true });
           let result;
           try {
             result = await collectFromTarget(session, {
               targetUrl,
-              limit: Number.parseInt(options.limit, 10),
+              limit: collectLimit,
               postsLimit: Number.parseInt(options.posts, 10),
               skipPosts: Number.parseInt(options.skipPosts, 10) || 0,
               commentsPerPost,
               includeLikers: options.likers ?? false,
+              likersPerPost,
               configuredAccount,
             });
           } finally {
@@ -128,6 +146,10 @@ export function registerCollectCommands(program: Command): void {
             postsObserved: result.observedPosts.length,
             postsVisited: result.postsVisited,
             likersUnavailable: result.likersUnavailable,
+            likerListsIncomplete: result.likerListsIncomplete,
+            likersCollected: result.likersCollected,
+            ...(result.likerIssues.length > 0 ? { likerIssues: result.likerIssues } : {}),
+            ...(options.likers ? { likersPerPost } : {}),
             commentsPerPost,
             commentLoadRounds: commentLoadRoundsFor(commentsPerPost),
             ...summary,

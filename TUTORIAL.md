@@ -410,6 +410,8 @@ muda e algum seletor precisa de ajuste.
 npm run dev -- debug:capture --url https://www.instagram.com/<perfil>/
 # abrir o diálogo de "Following" antes de capturar (para calibrar o unfollow)
 npm run dev -- debug:capture --url https://www.instagram.com/<perfil>/ --open-following-menu
+# abrir e percorrer a lista de curtidores antes de capturar
+npm run dev -- debug:capture --url https://www.instagram.com/p/<shortcode>/ --open-likers --likers-limit 150
 # exemplo real
 npm run dev -- debug:capture --url https://www.instagram.com/sigaodavid/
 ```
@@ -434,19 +436,24 @@ são mais engajados. Somente leitura.
   comentários de cada publicação. Valores maiores aumentam automaticamente as
   rodadas técnicas de carregamento (aproximadamente uma rodada para cada 10
   comentários, entre 15 e 200 rodadas).
-- `--likers`: também tenta curtidores (o Instagram costuma esconder).
+- `--likers`: abre o diálogo de curtidas e coleta os usernames disponíveis.
+- `--likers-per-post` (padrão: `--limit`): máximo de curtidores lidos de cada
+  publicação antes da deduplicação global. `--limit` continua sendo aplicado
+  aos candidatos únicos da execução.
 
 ```bash
 # somente comentários
 npm run dev -- collect --campaign "<nome>" --posts <n> --limit <n> --comments-per-post <n>
 # comentários + tentativa de capturar curtidores
-npm run dev -- collect --campaign "<nome>" --posts <n> --limit <n> --comments-per-post <n> --likers
+npm run dev -- collect --campaign "<nome>" --posts <n> --limit <n> --comments-per-post <n> --likers --likers-per-post <n>
 # exemplo real
 npm run dev -- collect --campaign "Teste" --posts 6 --limit 300
 # pulando 3 posts fixados no topo do grid
 npm run dev -- collect --campaign "Teste" --posts 6 --limit 300 --skip-posts 3
 # post muito comentado: tenta extrair até 1.000 comentaristas por publicação
 npm run dev -- collect --campaign "Teste" --posts 1 --limit 1000 --comments-per-post 1000
+# pula dois posts e tenta capturar até 500 curtidores do post seguinte
+npm run dev -- collect --campaign "argon_investimentos" --skip-posts 2 --posts 1 --limit 500 --comments-per-post 2000 --likers --likers-per-post 500 --account "appassetlens"
 ```
 
 `--likers` não cria uma ação de curtida: apenas tenta ler a lista de quem curtiu
@@ -455,12 +462,29 @@ cada publicação. Quando disponível, esses candidatos recebem a fonte
 deduplicados; o planejamento de follow seguinte combina as duas fontes e
 prioriza os sinais de comentário. Não há um plano separado por fonte.
 
+O resultado apresenta `likersCollected`, `likersUnavailable` e
+`likerListsIncomplete`. O primeiro conta usernames lidos das listas; os outros
+indicam, respectivamente, diálogos indisponíveis e listas que abriram mas
+estabilizaram antes do total ou limite solicitado. Quando um desses casos
+ocorre, `likerIssues` detalha o shortcode, o total esperado, o carregado e o
+motivo.
+
+O contador da publicação e a quantidade de perfis disponibilizados no diálogo
+podem divergir. Quando a interface chega comprovadamente ao fim sem entregar o
+total exibido, o coletor preserva todos os usernames obtidos e informa a leitura
+parcial em `likerListsIncomplete`; ele não inventa nem busca perfis fora da lista
+exposta pelo Instagram.
+
 **Saída (exemplo):**
 ```json
 {
   "ok": true,
   "campaign": "Teste",
   "postsVisited": 6,
+  "likersUnavailable": 0,
+  "likerListsIncomplete": 0,
+  "likersCollected": 74,
+  "likersPerPost": 300,
   "commentsPerPost": 80,
   "commentLoadRounds": 15,
   "input": 92,
@@ -798,9 +822,10 @@ npm run dev -- unfollow --plan 1657c7b4-b683-4acb-b41c-9b921067d257 --mode confi
 
 ## 10. Snapshot de seguidores (recomendado)
 
-`followers:sync` abre a lista da conta ativa, carrega todos os seguidores e só
-salva o snapshot como completo quando alcança o contador exato exibido no
-perfil. O comando não segue nem deixa de seguir ninguém.
+`followers:sync` abre a lista da conta ativa e carrega os seguidores. Quando
+alcança o contador exato, salva um snapshot `COMPLETE`. Uma diferença de até 1%
+é aceita como `TOLERATED`; diferenças maiores continuam `INCOMPLETE`. O comando
+não segue nem deixa de seguir ninguém.
 
 ```bash
 npm run dev -- followers:sync --account <sua_conta>
@@ -810,8 +835,16 @@ npm run dev -- followers:status --account <sua_conta> --check <username>
 
 Rode o sync antes do follow para criar o baseline da conversão confirmada e
 novamente depois da campanha. Para preservar quem segue você, rode-o também
-antes de `plan-unfollow --preserve-follow-backs`. Uma coleta incompleta é
-registrada para diagnóstico, mas nunca altera o último snapshot válido.
+antes de `plan-unfollow --preserve-follow-backs`. Em snapshot `TOLERATED`, os
+usernames presentes confirmam `YES`, mas a margem ausente não produz novos
+`NO` nem renova observações anteriores. Assim, uma ausência incerta nunca é
+usada para autorizar unfollow. Uma diferença acima de 1% é registrada como
+`INCOMPLETE` e não altera relacionamentos.
+
+No comando `metrics`, o snapshot `TOLERATED` mais recente é usado como fonte
+analítica atual: perfis presentes contam como `YES` e os ausentes como `NO`,
+dentro do risco estatístico aceito de até 1%. Essa classificação do relatório
+não altera as guardas conservadoras usadas para executar unfollow.
 
 ## 11. Reconciliação de follow-back (legado/opcional)
 

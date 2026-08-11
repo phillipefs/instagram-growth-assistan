@@ -23,6 +23,7 @@ export interface CollectOptions {
   readonly skipPosts?: number;
   readonly commentsPerPost?: number;
   readonly includeLikers?: boolean;
+  readonly likersPerPost?: number;
   readonly configuredAccount?: string | null;
 }
 
@@ -32,6 +33,12 @@ export function normalizeCommentsPerPost(value: number | undefined): number {
   return value !== undefined && Number.isFinite(value) && value > 0
     ? Math.floor(value)
     : DEFAULT_COMMENTS_PER_POST;
+}
+
+/** Por padrão, curtidores podem ocupar todo o limite ainda disponível da coleta. */
+export function normalizeLikersPerPost(value: number | undefined, collectLimit: number): number {
+  const fallback = Number.isFinite(collectLimit) && collectLimit > 0 ? Math.floor(collectLimit) : 1;
+  return value !== undefined && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
 /** Reserva aproximadamente uma rodada para cada 10 comentários solicitados. */
@@ -50,6 +57,15 @@ export interface CollectBrowserResult {
   }[];
   readonly postsVisited: number;
   readonly likersUnavailable: number;
+  readonly likerListsIncomplete: number;
+  readonly likersCollected: number;
+  readonly likerIssues: readonly {
+    readonly shortcode: string;
+    readonly status: 'UNAVAILABLE' | 'INCOMPLETE';
+    readonly expectedCount: number | null;
+    readonly loadedCount: number;
+    readonly reason: string;
+  }[];
   readonly stoppedReason: string | null;
   readonly safetyState: SafetyState;
 }
@@ -115,8 +131,12 @@ export async function collectFromTarget(
   const seen = new Set<string>();
   let postsVisited = 0;
   let likersUnavailable = 0;
+  let likerListsIncomplete = 0;
+  let likersCollected = 0;
+  const likerIssues: Array<CollectBrowserResult['likerIssues'][number]> = [];
   const commentsPerPost = normalizeCommentsPerPost(options.commentsPerPost);
   const commentLoadRounds = commentLoadRoundsFor(commentsPerPost);
+  const likersPerPost = normalizeLikersPerPost(options.likersPerPost, options.limit);
 
   posts: for (const post of postsToVisit) {
     if (seen.size >= options.limit) {
@@ -146,10 +166,30 @@ export async function collectFromTarget(
     }
 
     if (options.includeLikers) {
-      const likers = await readPostLikers(page);
+      // O limite por post precisa ser aplicado antes da deduplicação global.
+      // Usar apenas as vagas restantes interrompe cedo quando os posts têm
+      // curtidores em comum e impede que a coleta alcance `options.limit`.
+      const likers = await readPostLikers(page, likersPerPost);
       if (!likers.accessible) {
         likersUnavailable += 1;
+        likerIssues.push({
+          shortcode: post.shortcode,
+          status: 'UNAVAILABLE',
+          expectedCount: likers.expectedCount,
+          loadedCount: likers.usernames.length,
+          reason: likers.reason,
+        });
+      } else if (!likers.complete) {
+        likerListsIncomplete += 1;
+        likerIssues.push({
+          shortcode: post.shortcode,
+          status: 'INCOMPLETE',
+          expectedCount: likers.expectedCount,
+          loadedCount: likers.usernames.length,
+          reason: likers.reason,
+        });
       }
+      likersCollected += likers.usernames.length;
       for (const username of likers.usernames) {
         if (exclude.has(username)) {
           continue;
@@ -180,6 +220,9 @@ export async function collectFromTarget(
     })),
     postsVisited,
     likersUnavailable,
+    likerListsIncomplete,
+    likersCollected,
+    likerIssues,
     stoppedReason: null,
     safetyState: 'SAFE',
   };
@@ -192,6 +235,9 @@ function empty(safetyState: SafetyState, reason: string): CollectBrowserResult {
     observedPosts: [],
     postsVisited: 0,
     likersUnavailable: 0,
+    likerListsIncomplete: 0,
+    likersCollected: 0,
+    likerIssues: [],
     stoppedReason: reason,
     safetyState,
   };

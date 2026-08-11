@@ -100,6 +100,153 @@ test('lê curtidores quando acessíveis', async ({ page }) => {
   expect(likers.usernames).toEqual(['liker_one', 'liker_two']);
 });
 
+test('abre o diálogo e carrega todos os 188 curtidores por rolagem', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <button id="open-likers">188 likes</button>
+      <div data-testid="likers-dialog" role="dialog" hidden>
+        <h2>Likes</h2>
+        <div id="likers-list" data-testid="likers-scroll"></div>
+      </div>
+    </main>
+    <style>
+      #likers-list { height: 180px; overflow-y: auto; }
+      #likers-list a { display: block; height: 20px; }
+    </style>
+    <script>
+      const total = 188;
+      let loaded = 0;
+      const dialog = document.querySelector('[data-testid="likers-dialog"]');
+      const list = document.querySelector('#likers-list');
+      const appendBatch = () => {
+        const target = Math.min(total, loaded + 25);
+        while (loaded < target) {
+          const link = document.createElement('a');
+          link.href = '/liker_' + String(loaded).padStart(3, '0') + '/';
+          link.textContent = 'liker_' + String(loaded).padStart(3, '0');
+          list.appendChild(link);
+          loaded += 1;
+        }
+      };
+      document.querySelector('#open-likers').addEventListener('click', () => {
+        dialog.hidden = false;
+        appendBatch();
+      });
+      list.addEventListener('scroll', () => {
+        if (list.scrollTop + list.clientHeight >= list.scrollHeight - 25) appendBatch();
+      });
+    </script>
+  `);
+
+  const likers = await readPostLikers(page, 500);
+  expect(likers.accessible).toBe(true);
+  expect(likers.complete).toBe(true);
+  expect(likers.expectedCount).toBe(188);
+  expect(likers.usernames).toHaveLength(188);
+  expect(likers.usernames[0]).toBe('liker_000');
+  expect(likers.usernames[187]).toBe('liker_187');
+});
+
+test('lê curtidores em painel visual sem role dialog', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <button id="open-likers">4 curtidas</button>
+      <div id="likers-sheet" style="display: none; position: fixed; inset: 0">
+        <h2>Curtidas</h2>
+        <a href="/liker_a/">A</a>
+        <a href="/liker_b/">B</a>
+        <a href="/liker_c/">C</a>
+        <a href="/liker_d/">D</a>
+      </div>
+    </main>
+    <script>
+      document.querySelector('#open-likers').addEventListener('click', () => {
+        document.querySelector('#likers-sheet').style.display = 'block';
+      });
+    </script>
+  `);
+
+  const likers = await readPostLikers(page, 10);
+  expect(likers.accessible).toBe(true);
+  expect(likers.complete).toBe(true);
+  expect(likers.usernames).toEqual(['liker_a', 'liker_b', 'liker_c', 'liker_d']);
+});
+
+test('prioriza o link textual quando miniaturas e contagem usam liked_by', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <a id="avatar-link" href="/p/POST123/liked_by/"><img alt="miniatura"></a>
+      <a id="count-link" href="/p/POST123/liked_by/">outras 2 pessoas</a>
+      <div data-testid="likers-dialog" role="dialog" hidden>
+        <h2>Curtidas</h2>
+        <a href="/liker_a/">A</a>
+        <a href="/liker_b/">B</a>
+        <a href="/liker_c/">C</a>
+      </div>
+    </main>
+    <script>
+      document.querySelector('#count-link').addEventListener('click', (event) => {
+        event.preventDefault();
+        document.querySelector('[data-testid="likers-dialog"]').hidden = false;
+      });
+    </script>
+  `);
+
+  const likers = await readPostLikers(page, 10);
+  expect(likers.accessible).toBe(true);
+  expect(likers.complete).toBe(true);
+  expect(likers.expectedCount).toBe(3);
+  expect(likers.usernames).toEqual(['liker_a', 'liker_b', 'liker_c']);
+});
+
+test('lê curtidores quando o link abre uma página em vez de diálogo', async ({ page }) => {
+  await page.setContent(`
+    <main id="post">
+      <a id="open-likers" href="/p/POST123/liked_by/">3 likes</a>
+    </main>
+    <main data-testid="likers-page" hidden>
+      <h1>Likes</h1>
+      <a href="/page_liker_a/">A</a>
+      <a href="/page_liker_b/">B</a>
+      <a href="/page_liker_c/">C</a>
+    </main>
+    <script>
+      document.querySelector('#open-likers').addEventListener('click', (event) => {
+        event.preventDefault();
+        document.querySelector('#post').hidden = true;
+        document.querySelector('[data-testid="likers-page"]').hidden = false;
+      });
+    </script>
+  `);
+
+  const likers = await readPostLikers(page, 10);
+  expect(likers.accessible).toBe(true);
+  expect(likers.complete).toBe(true);
+  expect(likers.usernames).toEqual(['page_liker_a', 'page_liker_b', 'page_liker_c']);
+});
+
+test('não lê links de um diálogo que não seja de curtidores', async ({ page }) => {
+  await page.setContent(`
+    <main>
+      <button id="open-dialog">188 curtidas</button>
+      <div role="dialog" hidden>
+        <h2>Compartilhar</h2>
+        <a href="/nao_eh_curtidor/">perfil fora da lista</a>
+      </div>
+    </main>
+    <script>
+      document.querySelector('#open-dialog').addEventListener('click', () => {
+        document.querySelector('[role="dialog"]').hidden = false;
+      });
+    </script>
+  `);
+
+  const likers = await readPostLikers(page, 500);
+  expect(likers.accessible).toBe(false);
+  expect(likers.usernames).toEqual([]);
+  expect(likers.reason).toContain('não reconhecido');
+});
+
 test('trata curtidores ocultos como indisponíveis', async ({ page }) => {
   await page.goto(fixtureUrl('post_likers_hidden.html'));
   const likers = await readPostLikers(page);

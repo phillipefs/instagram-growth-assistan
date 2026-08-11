@@ -108,10 +108,24 @@ adicione `--likers`:
 npm run dev -- collect --campaign "professor_vicente" --skip-posts 0 --posts 20 --limit 20000 --comments-per-post 2000 --likers --account "appassetlens"
 ```
 
-Essa opção continua coletando comentários. Os curtidores são acrescentados como
-`RECENT_POST_LIKERS` quando a lista estiver disponível; se o Instagram ocultar a
-lista, o resultado informa `likersUnavailable` e a coleta dos comentários
-continua normalmente. O comando não curte posts nem segue ninguém.
+Essa opção continua coletando comentários. O coletor abre o diálogo de curtidas,
+rola a lista e acrescenta os usernames como `RECENT_POST_LIKERS`. Por padrão,
+cada post é lido até o valor de `--limit`, antes da deduplicação entre posts;
+use `--likers-per-post <n>` para impor outro teto por publicação.
+
+Exemplo: pula os dois primeiros posts, abre uma publicação e tenta obter até 500
+curtidores, além dos comentaristas:
+
+```bash
+npm run dev -- collect --campaign "argon_investimentos" --skip-posts 2 --posts 1 --limit 500 --comments-per-post 2000 --likers --likers-per-post 500 --account "appassetlens"
+```
+
+Se o Instagram não disponibilizar o diálogo, o resultado incrementa
+`likersUnavailable`. Se a lista abrir mas parar de carregar antes do total ou do
+limite, incrementa `likerListsIncomplete`. `likersCollected` informa quantos
+usernames foram lidos das listas. Quando houver falha ou leitura parcial,
+`likerIssues` mostra o post, o total esperado, o total carregado e o motivo. O
+comando não curte posts nem segue ninguém.
 
 Segunda coleta da mesma campanha: ignora os 20 primeiros posts e percorre os
 posts 21 a 40:
@@ -231,8 +245,12 @@ npm run dev -- metrics --account "appassetlens"
 O bloco `Conversão de follow por campanha` mostra `seguidos`,
 `seguiram_de_volta` e `conversão` para cada campanha. A linha `TOTAL (pessoas
 únicas)` deduplica quem apareceu em mais de uma campanha. Rode `followers:sync`
-antes para medir contra o snapshot completo mais recente; sem snapshot, o
-relatório usa as observações locais e informa a cobertura disponível.
+antes para medir contra o snapshot aceito mais recente. O sync aceita até 1% de
+diferença como `TOLERATED`; para métricas, essa base classifica presentes como
+`YES` e ausentes como `NO` e informa data, cobertura e tolerância na fonte. Essa
+suposição vale somente para o relatório: a execução de unfollow continua
+preservando ausências incertas. Sem snapshot aceito, o relatório usa as
+observações locais e informa a cobertura disponível.
 
 Relatório da execução mais recente:
 
