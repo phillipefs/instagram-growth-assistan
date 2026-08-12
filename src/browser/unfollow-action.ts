@@ -29,7 +29,10 @@ export async function clickUnfollow(page: Page): Promise<void> {
   const confirm = page
     .getByRole('button', { name: UNFOLLOW_CONFIRM_TEXT })
     .or(page.getByRole('menuitem', { name: UNFOLLOW_CONFIRM_TEXT }));
-  await confirm.first().click({ timeout: 4000 }).catch(() => undefined);
+  await confirm
+    .first()
+    .click({ timeout: 4000 })
+    .catch(() => undefined);
 }
 
 /**
@@ -43,11 +46,37 @@ export async function performUnfollow(
 ): Promise<ObservedRelationship> {
   await clickUnfollow(page);
   const deadline = Date.now() + 5000;
+  let lastRelationship: ObservedRelationship;
   for (;;) {
     await page.waitForTimeout(250);
-    const relationship = assessProfile(await readProfileSignals(page, readOptions)).relationshipState;
-    if (relationship === 'NOT_FOLLOWING' || Date.now() >= deadline) {
-      return relationship;
+    try {
+      const assessment = assessProfile(await readProfileSignals(page, readOptions));
+      if (assessment.safetyState !== 'SAFE') {
+        return 'UNKNOWN';
+      }
+      lastRelationship = assessment.relationshipState;
+      if (lastRelationship === 'NOT_FOLLOWING') {
+        return lastRelationship;
+      }
+    } catch {
+      // O nó pode ser substituído pelo React durante a leitura. Não reclica:
+      // aguarda e resolve novamente o controle a partir do DOM atual.
+      lastRelationship = 'UNKNOWN';
     }
+    if (Date.now() >= deadline) {
+      break;
+    }
+  }
+
+  // Exceção somente leitura: uma recarga pode confirmar o estado quando o DOM
+  // do perfil falhou após o clique. Nunca repete a ação externa.
+  try {
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 10_000 });
+    await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
+    await page.waitForTimeout(600);
+    const assessment = assessProfile(await readProfileSignals(page, readOptions));
+    return assessment.safetyState === 'SAFE' ? assessment.relationshipState : 'UNKNOWN';
+  } catch {
+    return lastRelationship;
   }
 }

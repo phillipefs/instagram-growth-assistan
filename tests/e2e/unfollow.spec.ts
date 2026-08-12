@@ -23,6 +23,33 @@ test('uma saída confirma NOT_FOLLOWING', async ({ page }) => {
   expect(after).toBe('NOT_FOLLOWING');
 });
 
+test('confirma quando o React substitui o botão e o conteúdo exibe falha', async ({ page }) => {
+  await page.setContent(`
+    <header>
+      <h2 data-testid="profile-username">alvo</h2>
+      <div>10 posts 20 seguidores 30 seguindo</div>
+      <button id="relationship" data-testid="follow-button" data-state="REQUESTED">Solicitado</button>
+      <button id="unfollow" data-testid="unfollow-button">Cancelar solicitação</button>
+    </header>
+    <main id="content"></main>
+    <script>
+      document.querySelector('#unfollow').addEventListener('click', () => {
+        const old = document.querySelector('#relationship');
+        const replacement = document.createElement('button');
+        replacement.id = 'relationship';
+        replacement.dataset.testid = 'follow-button';
+        replacement.dataset.state = 'FOLLOW';
+        replacement.textContent = 'Seguir';
+        old.replaceWith(replacement);
+        document.querySelector('#content').textContent = 'Falha no carregamento.';
+      });
+    </script>
+  `);
+
+  const after = await performUnfollow(page, { allowedHosts: [''] });
+  expect(after).toBe('NOT_FOLLOWING');
+});
+
 test('deixa de seguir pela linha exata da janela Seguindo', async ({ page }) => {
   await page.goto(fixtureUrl('following_list.html'));
   const controller = new FollowingListUnfollowController(page, 'appassetlens');

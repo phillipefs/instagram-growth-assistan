@@ -21,8 +21,13 @@ function write(payload: unknown): void {
   process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
 }
 
-interface UnfollowOptions {
+export interface UnfollowOptions {
   olderThan?: string;
+  /**
+   * Commander remove o prefixo `no-` do nome da propriedade e usa `true`
+   * quando a opção não foi informada, mesmo que a flag receba um argumento.
+   */
+  followBackAfter?: string | boolean;
   noFollowBackAfter?: string;
   followedWithin?: string;
   from?: string;
@@ -37,12 +42,20 @@ interface UnfollowOptions {
   export?: string;
 }
 
-function parseFilters(options: UnfollowOptions): UnfollowFilters {
-  if (options.olderThan && options.noFollowBackAfter) {
+function noFollowBackAfterValue(options: UnfollowOptions): string | undefined {
+  if (typeof options.noFollowBackAfter === 'string') {
+    return options.noFollowBackAfter;
+  }
+  return typeof options.followBackAfter === 'string' ? options.followBackAfter : undefined;
+}
+
+export function parseUnfollowFilters(options: UnfollowOptions): UnfollowFilters {
+  const noFollowBackAfter = noFollowBackAfterValue(options);
+  if (options.olderThan && noFollowBackAfter) {
     throw new Error('Use apenas --older-than ou --no-follow-back-after, não ambos.');
   }
-  const noFollowBackAfterDays = options.noFollowBackAfter
-    ? parsePositiveDays(options.noFollowBackAfter, '--no-follow-back-after')
+  const noFollowBackAfterDays = noFollowBackAfter
+    ? parsePositiveDays(noFollowBackAfter, '--no-follow-back-after')
     : undefined;
   return {
     ...(options.olderThan ? { olderThanDays: Number.parseInt(options.olderThan, 10) } : {}),
@@ -142,13 +155,14 @@ export function registerUnfollowPlanCommands(program: Command): void {
           campaignId = campaign.id;
         }
 
-        const filters = parseFilters(options);
+        const filters = parseUnfollowFilters(options);
+        const noFollowBackAfter = noFollowBackAfterValue(options);
         const config = loadConfig();
         const preserveFollowBacks =
           config.unfollow.preserveFollowBacks ||
           options.preserveFollowBacks === true ||
           options.excludeFollowers === true ||
-          options.noFollowBackAfter !== undefined;
+          noFollowBackAfter !== undefined;
         const followerSnapshot = preserveFollowBacks
           ? latestFreshFollowerSnapshot(db, account.id, config.unfollow.followBackValidityDays)
           : {};
@@ -224,13 +238,14 @@ export function registerUnfollowPlanCommands(program: Command): void {
         campaignId = campaign.id;
       }
 
-      const filters = parseFilters(options);
+      const filters = parseUnfollowFilters(options);
+      const noFollowBackAfter = noFollowBackAfterValue(options);
       const config = loadConfig();
       const preserveFollowBacks =
         config.unfollow.preserveFollowBacks ||
         options.preserveFollowBacks === true ||
         options.excludeFollowers === true ||
-        options.noFollowBackAfter !== undefined;
+        noFollowBackAfter !== undefined;
       const followerSnapshot = preserveFollowBacks
         ? latestFreshFollowerSnapshot(db, account.id, config.unfollow.followBackValidityDays)
         : {};

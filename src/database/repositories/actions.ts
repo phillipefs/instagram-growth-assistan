@@ -323,6 +323,48 @@ export class ActionAttemptRepo {
   }
 
   /**
+   * Confirma posteriormente um unfollow cujo clique já ocorreu, mas cuja
+   * confirmação original terminou FAILED/AMBIGUOUS. Exige uma leitura externa
+   * posterior de NOT_FOLLOWING; este método apenas registra a reconciliação.
+   */
+  reconcileUnfollowAsConfirmed(actionAttemptId: string, note: string): ActionAttempt {
+    const attempt = this.findById(actionAttemptId);
+    if (!attempt) {
+      throw new Error(`Ação não encontrada: ${actionAttemptId}`);
+    }
+    if (attempt.state === 'CONFIRMED') {
+      return attempt;
+    }
+    if (attempt.actionType !== 'UNFOLLOW') {
+      throw new Error(`A reconciliação exige uma ação UNFOLLOW (atual: ${attempt.actionType}).`);
+    }
+    if (attempt.state !== 'FAILED' && attempt.state !== 'AMBIGUOUS') {
+      throw new Error(
+        `Somente UNFOLLOW FAILED/AMBIGUOUS pode ser confirmado (atual: ${attempt.state}).`,
+      );
+    }
+    const normalizedNote = note.trim();
+    if (!normalizedNote) {
+      throw new Error('A reconciliação exige uma justificativa.');
+    }
+    const now = nowIso();
+    this.db
+      .prepare(
+        `UPDATE action_attempts
+            SET prev_state = state, state = 'CONFIRMED', next_state = 'CONFIRMED',
+                result = ?, ended_at = COALESCE(ended_at, ?), updated_at = ?
+          WHERE id = ? AND action_type = 'UNFOLLOW'
+            AND state IN ('FAILED', 'AMBIGUOUS')`,
+      )
+      .run(normalizedNote, now, now, actionAttemptId);
+    const updated = this.findById(actionAttemptId);
+    if (!updated) {
+      throw new Error('Falha ao confirmar reconciliação de unfollow.');
+    }
+    return updated;
+  }
+
+  /**
    * Conta ações reais de uma conta/tipo desde `sinceIso` (inclusive). Conta
    * estados que podem ter alcançado a plataforma (`CONFIRMED` e `AMBIGUOUS`),
    * para que o teto operacional diário seja conservador.

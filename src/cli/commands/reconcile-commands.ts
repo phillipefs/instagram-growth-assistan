@@ -292,6 +292,116 @@ export function registerReconcileCommands(program: Command): void {
     });
 
   program
+    .command('unfollow:confirm-unresolved')
+    .description('Confirma por leitura um unfollow FAILED/AMBIGUOUS, sem repetir o clique.')
+    .requiredOption('--run <id>', 'run que contém a tentativa não resolvida')
+    .requiredOption('--username <username>', 'perfil cujo unfollow será verificado')
+    .option('--confirm', 'autoriza registrar a confirmação observada localmente')
+    .action(async (options: { run: string; username: string; confirm?: boolean }) => {
+      if (!options.confirm) {
+        write({ ok: false, error: 'Confirmação obrigatória. Repita com --confirm.' });
+        process.exitCode = 1;
+        return;
+      }
+
+      const db = openAppDatabase();
+      let session: BrowserSession | null = null;
+      try {
+        const run = new RunRepo(db).get(options.run);
+        if (!run || run.type !== 'UNFOLLOW') {
+          throw new Error(`Run de UNFOLLOW não encontrada: ${options.run}`);
+        }
+        if (!run.localAccountId) {
+          throw new Error(`Run sem conta local: ${run.id}`);
+        }
+        const account = new LocalAccountRepo(db).findById(run.localAccountId);
+        if (!account) {
+          throw new Error(`Conta local não encontrada: ${run.localAccountId}`);
+        }
+        const profile = new ProfileRepo(db).findByUsername(canonicalUsername(options.username));
+        if (!profile) {
+          throw new Error(`Perfil não encontrado: ${options.username}`);
+        }
+        const actions = new ActionAttemptRepo(db);
+        const matches = actions
+          .listByRunId(run.id)
+          .filter(
+            (attempt) =>
+              attempt.actionType === 'UNFOLLOW' &&
+              attempt.profileId === profile.id &&
+              (attempt.state === 'FAILED' || attempt.state === 'AMBIGUOUS'),
+          );
+        if (matches.length !== 1) {
+          throw new Error(
+            `Esperada exatamente uma tentativa UNFOLLOW FAILED/AMBIGUOUS; encontradas: ${matches.length}.`,
+          );
+        }
+        const attempt = matches[0]!;
+        if (!attempt.relationshipCycleId) {
+          throw new Error(`Tentativa sem ciclo de relacionamento: ${attempt.id}`);
+        }
+
+        session = await BrowserSession.open({ visible: true });
+        await session.goto();
+        const sessionReport = await session.assess(account.username);
+        if (
+          sessionReport.assessment.safetyState !== 'SAFE' ||
+          sessionReport.assessment.sessionStatus !== 'authenticated' ||
+          sessionReport.account?.shouldStop
+        ) {
+          throw new Error('Sessão ou conta ativa não está segura para reconciliar.');
+        }
+        const observed = await session.inspectProfile(
+          `https://www.instagram.com/${profile.usernameCanonical}/`,
+        );
+        if (
+          observed.assessment.safetyState !== 'SAFE' ||
+          canonicalUsername(observed.assessment.username ?? '') !== profile.usernameCanonical ||
+          observed.assessment.relationshipState !== 'NOT_FOLLOWING'
+        ) {
+          throw new Error(
+            `Unfollow não confirmado por leitura: ${observed.assessment.relationshipState} (${observed.assessment.safetyState}).`,
+          );
+        }
+
+        const result = withTransaction(db, () => {
+          const confirmed = actions.reconcileUnfollowAsConfirmed(
+            attempt.id,
+            'reconciliado por leitura posterior: NOT_FOLLOWING',
+          );
+          const relationships = new RelationshipRepo(db);
+          const cycle = relationships.findCycleById(attempt.relationshipCycleId!);
+          if (!cycle) {
+            throw new Error(
+              `Ciclo de relacionamento não encontrado: ${attempt.relationshipCycleId}`,
+            );
+          }
+          if (!cycle.unfollowedAt) {
+            relationships.closeCycle(cycle.id, {
+              unfollowReason: 'reconciliado por leitura posterior: NOT_FOLLOWING',
+            });
+          }
+          return { confirmed, cycleId: cycle.id };
+        });
+
+        write({
+          ok: true,
+          username: profile.usernameCanonical,
+          relationship: 'NOT_FOLLOWING',
+          actionAttemptId: result.confirmed.id,
+          relationshipCycleId: result.cycleId,
+          warning: 'Reconciliação somente leitura; nenhum clique foi executado.',
+        });
+      } catch (error) {
+        write({ ok: false, error: error instanceof Error ? error.message : String(error) });
+        process.exitCode = 1;
+      } finally {
+        await session?.close().catch(() => undefined);
+        db.close();
+      }
+    });
+
+  program
     .command('reconcile-followback')
     .description(
       'Observa (somente leitura) follow-backs ainda não inspecionados e registra o resultado.',

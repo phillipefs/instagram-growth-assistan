@@ -233,6 +233,21 @@ npm run dev -- follow --plan "<PLAN_ID>" --mode supervised-batch --limit 50 --ac
 Os confirmados e o ambíguo reconciliado serão pulados; o processamento seguirá
 nos itens restantes. Não crie outro plano para retomar esse lote.
 
+### Continuar depois de um unfollow FAILED/AMBIGUOUS
+
+Se uma leitura posterior mostrar `Seguir`, confirme o unfollow sem reclicar:
+
+```bash
+npm run dev -- unfollow:confirm-unresolved --run "<RUN_ID>" --username "<USERNAME>" --confirm
+```
+
+Depois, execute novamente **o mesmo plano**. Os itens já confirmados ou pulados
+não consomem o novo limite; o processamento continua nos itens restantes:
+
+```bash
+npm run dev -- unfollow --plan "<PLAN_ID>" --mode supervised-batch --limit 50 --account "appassetlens"
+```
+
 ## 7. Relatórios rápidos
 
 Resumo agregado de toda a operação:

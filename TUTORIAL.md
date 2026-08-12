@@ -933,6 +933,15 @@ ferramenta falha "fechada" (na dúvida, não age).
   follow é criado. No caminho `confirm`, a tentativa e o ciclo `TOOL_CLICK` são
   atualizados pela observação. Depois, reexecute o mesmo plano com limite positivo.
 
+- **`falha na ação; parada sem repetição automática` durante unfollow**
+  Se a evidência ou uma leitura posterior mostrar `Seguir`, reconcilie sem novo clique:
+  ```bash
+  npm run dev -- unfollow:confirm-unresolved --run <RUN_ID> --username <USERNAME> --confirm
+  ```
+  O comando exige `NOT_FOLLOWING`, confirma a tentativa e fecha o ciclo local.
+  Em seguida, reexecute o **mesmo plano**; os itens anteriores serão pulados por
+  idempotência e o processamento continuará no próximo item.
+
 - **`ação anterior não confirmada; reconcilie antes de prosseguir`**
   Existe uma tentativa anterior **ambígua/pendente** para aquele item, que
   bloqueia repetir o **mesmo** plano. Para um follow ambíguo, use
@@ -1077,7 +1086,8 @@ npm run dev -- metrics          # visão agregada (coleta, ações, follows por 
 
 > **Retomada:** não existe retomada automática. Uma ambiguidade deve ser
 > reconciliada antes; no follow, `follow:skip-ambiguous` permite pular o item sem
-> repetir o clique. Depois, reexecutar o **mesmo plano** conclui o restante. Toda
+> repetir o clique. No unfollow, `unfollow:confirm-unresolved` confirma por leitura
+> um resultado `FAILED/AMBIGUOUS`. Depois, reexecutar o **mesmo plano** conclui o restante. Toda
 > execução exige `--limit` positivo e roda no navegador visível, em sequência.
 
 > **Recomeçar do zero:** para zerar todo o histórico local e testar de novo,

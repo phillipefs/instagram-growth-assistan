@@ -131,6 +131,27 @@ describe('ActionAttemptRepo — idempotência e transições', () => {
     expect(confirmed.state).toBe('CONFIRMED');
     expect(confirmed.result).toContain('FOLLOW_REQUESTED');
   });
+
+  it('reconcilia UNFOLLOW com falha após leitura posterior sem nova ação', () => {
+    const { account, profile } = seedAccountAndProfile();
+    const repo = new ActionAttemptRepo(db);
+    const { attempt } = repo.prepare({
+      localAccountId: account.id,
+      profileId: profile.id,
+      actionType: 'UNFOLLOW',
+      idempotencyKey: 'failed-unfollow-confirmed-later',
+    });
+    repo.transition(attempt.id, 'PENDING');
+    repo.transition(attempt.id, 'FAILED', { result: 'DOM substituído após o clique' });
+
+    const confirmed = repo.reconcileUnfollowAsConfirmed(
+      attempt.id,
+      'reconciliado por leitura posterior: NOT_FOLLOWING',
+    );
+
+    expect(confirmed.state).toBe('CONFIRMED');
+    expect(confirmed.result).toContain('NOT_FOLLOWING');
+  });
 });
 
 describe('transações', () => {

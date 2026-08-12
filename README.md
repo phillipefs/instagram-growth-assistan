@@ -220,6 +220,7 @@ metrics [--account]                   métricas e conversão por campanha/total
 follow [--skip-inactive --like]       follow supervisionado (dry-run padrão)
 follow:skip-ambiguous                 libera um follow ambíguo sem repetir o clique
 follow:confirm-ambiguous              confirma por leitura um follow ambíguo
+unfollow:confirm-unresolved           confirma por leitura um unfollow FAILED/AMBIGUOUS
 like-post                             curtida supervisionada de publicação
 reconcile-followback                  cruza pendentes com a lista de seguidores (leitura)
 followers:sync                        salva um snapshot completo dos seguidores (leitura)

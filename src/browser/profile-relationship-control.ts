@@ -156,6 +156,9 @@ async function belongsToPrimaryProfileArea(
       usernameSelector: profileLocators.username,
       suggestionsSource: SUGGESTIONS_TEXT.source,
     },
+    // O React substitui o botão logo após follow/unfollow. Uma referência antiga
+    // não pode bloquear a confirmação por 30s; o chamador relê o DOM atual.
+    { timeout: 1_000 },
   );
 }
 
