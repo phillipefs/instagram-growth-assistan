@@ -196,16 +196,34 @@ pulado sem clique; o lote continua.
 
 Antes da ação, o botão `Seguir` é vinculado ao username e ao bloco de
 estatísticas do alvo. Botões de `Sugestões para você` são ignorados mesmo dentro do
-mesmo header. Ausência, duplicidade, instabilidade ou `Falha no carregamento`
-do próprio cabeçalho pulam o item sem clique. Uma falha apenas na grade de posts
-não invalida um botão principal reconhecido. A confirmação precisa permanecer estável em duas leituras.
+mesmo header. Ausência, duplicidade, instabilidade ou `Falha no carregamento` que
+afete o cabeçalho/controle principal pulam o item sem clique. Uma falha restrita à
+grade de publicações não bloqueia um botão `Seguir` válido e estável. A confirmação
+precisa permanecer estável em duas leituras.
 Uma substituição técnica do nó pelo React é aceita somente se o novo botão continuar
 estruturalmente ligado ao mesmo perfil. Estados provisórios de carregamento recebem
 algumas releituras somente leitura antes de virar `UNKNOWN_INTERFACE`.
 Não há segunda abertura no fluxo normal; uma recarga somente leitura ocorre apenas
-se o clique foi despachado e a confirmação visual sumiu. Nessa exceção, respostas
-do perfil também podem confirmar `friendship_status` para o username exato. Um resultado que continuar
+se o clique foi despachado e a confirmação visual sumiu. Após essa recarga, a
+ferramenta aguarda até 3 segundos, sem repetir o clique. Um observador somente
+leitura, iniciado antes do clique e mantido durante a recarga, também pode confirmar
+o `friendship_status` positivo para o username exato. Um resultado que continuar
 desconhecido interrompe o lote por segurança.
+
+Se a recarga carregar normalmente e confirmar novamente o botão `Seguir`, a
+tentativa é registrada como não aplicada (`SKIPPED`). O clique não é repetido, a
+tentativa continua contando no limite real e o lote segue para o próximo perfil.
+Três tentativas consecutivas não aplicadas interrompem o lote, pois indicam uma
+falha repetida da plataforma; assim os candidatos restantes não são descartados.
+Falhas transitórias de carregamento e ações comprovadamente não aplicadas podem
+ser tentadas novamente somente por uma nova execução explícita do mesmo plano.
+O histórico anterior é preservado e nunca há segundo clique na mesma execução.
+
+Se a resposta da própria mutação de follow trouxer erro da plataforma, como
+`mutação GraphQL rejeitada`, o item é registrado como `FAILED` com a categoria
+`PLATFORM_REJECTED` e o lote para imediatamente. Não trate esse caso como
+ambiguidade e não reexecute o plano enquanto o follow manual na mesma sessão
+também falhar ou voltar para `Seguir`.
 
 ## 6. Continuar depois de um follow ambíguo
 

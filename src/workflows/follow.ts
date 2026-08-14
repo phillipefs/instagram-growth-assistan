@@ -245,13 +245,34 @@ export async function runFollow(
         }
         if (!performed.clicked) {
           const shot = await driver.screenshot(`follow-skipped-no-button-${item.username}`);
+          const transientLoadFailure =
+            performed.notClickedReason?.startsWith('Falha no carregamento') === true;
           return {
             result: 'SKIPPED',
             detail: `${performed.notClickedReason ?? 'botão principal Seguir ausente no momento da ação'}; nenhum clique realizado`,
+            ...(transientLoadFailure ? { errorCategory: 'TRANSIENT_PRE_ACTION' } : {}),
             ...(shot ? { screenshotPath: shot } : {}),
           };
         }
         const after = performed.relationship;
+        if (after === 'NOT_FOLLOWING') {
+          const shot = await driver.screenshot(`follow-not-applied-${item.username}`);
+          if (performed.notAppliedReason?.startsWith('mutação GraphQL rejeitada')) {
+            return {
+              result: 'FAILED',
+              errorCategory: 'PLATFORM_REJECTED',
+              detail: performed.notAppliedReason,
+              ...(shot ? { screenshotPath: shot } : {}),
+            };
+          }
+          return {
+            result: 'SKIPPED',
+            actionDispatched: true,
+            errorCategory: 'TRANSIENT_NOT_APPLIED',
+            detail: `clique despachado, mas a recarga confirmou que o perfil continua não seguido; nenhum novo clique foi feito${performed.notAppliedReason ? `; ${performed.notAppliedReason}` : ''}`,
+            ...(shot ? { screenshotPath: shot } : {}),
+          };
+        }
         const interpreted = interpretFollowResult(before, after);
         if (interpreted.result !== 'CONFIRMED') {
           const shot = await driver.screenshot(`follow-ambiguous-${item.username}`);

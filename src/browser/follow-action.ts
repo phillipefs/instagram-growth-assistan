@@ -9,6 +9,7 @@ export interface PerformFollowResult {
   readonly clicked: boolean;
   readonly relationship: ObservedRelationship;
   readonly notClickedReason?: string;
+  readonly notAppliedReason?: string;
 }
 
 export interface PerformFollowOptions {
@@ -41,6 +42,28 @@ interface ConfirmationRead {
   readonly terminal: boolean;
 }
 
+const LOAD_FAILURE_TEXT =
+  /(?:falha no carregamento|não foi possível carregar|couldn['’]?t load|failed to load)/i;
+
+async function visibleLoadFailureText(page: Page): Promise<boolean> {
+  const visibleText = await page
+    .locator('body')
+    .innerText()
+    .catch(() => '');
+  return LOAD_FAILURE_TEXT.test(visibleText);
+}
+
+async function loadFailureTouchesPrimaryProfile(
+  control: Awaited<ReturnType<typeof resolvePrimaryRelationshipControl>>,
+): Promise<boolean> {
+  if (!control) return false;
+  const profileHeaderText = await control.locator
+    .locator('xpath=ancestor::header[1]')
+    .innerText()
+    .catch(() => '');
+  return LOAD_FAILURE_TEXT.test(profileHeaderText);
+}
+
 function canonicalUsername(value: string): string {
   return value.trim().replace(/^@/, '').toLowerCase();
 }
@@ -65,11 +88,20 @@ async function validateFollowTarget(
     return `perfil visível @${signals.usernameShown} diverge do esperado @${expectedUsername}`;
   }
   if (signals.followButtonState !== 'FOLLOW') {
+    if (await visibleLoadFailureText(page)) {
+      return 'Falha no carregamento afetou a área essencial do perfil imediatamente antes do clique';
+    }
     return 'botão principal Seguir ausente ou em estado diferente de FOLLOW';
   }
   const control = await resolvePrimaryRelationshipControl(page, expectedUsername);
   if (!control || control.state !== 'FOLLOW' || !(await control.locator.isEnabled())) {
+    if (await visibleLoadFailureText(page)) {
+      return 'Falha no carregamento afetou a área essencial do perfil imediatamente antes do clique';
+    }
     return 'botão principal Seguir ausente, duplicado, invisível ou desabilitado';
+  }
+  if (await loadFailureTouchesPrimaryProfile(control)) {
+    return 'Falha no carregamento dentro do cabeçalho principal imediatamente antes do clique';
   }
   return null;
 }
@@ -195,7 +227,9 @@ async function readConfirmation(
     const relationship = assessment.relationshipState;
     return {
       relationship:
-        relationship === 'FOLLOWING' || relationship === 'FOLLOW_REQUESTED'
+        relationship === 'FOLLOWING' ||
+        relationship === 'FOLLOW_REQUESTED' ||
+        relationship === 'NOT_FOLLOWING'
           ? relationship
           : 'UNKNOWN',
       terminal: false,
@@ -210,6 +244,7 @@ async function waitForStableConfirmation(
   readOptions: ReadSignalsOptions | undefined,
   expectedUsername: string | undefined,
   timeoutMs: number,
+  acceptNotFollowing = false,
 ): Promise<ConfirmationRead> {
   const deadline = Date.now() + Math.max(0, timeoutMs);
   let previous: ObservedRelationship = 'UNKNOWN';
@@ -220,7 +255,11 @@ async function waitForStableConfirmation(
     if (current.terminal) {
       return current;
     }
-    if (current.relationship === 'FOLLOWING' || current.relationship === 'FOLLOW_REQUESTED') {
+    const confirmable =
+      current.relationship === 'FOLLOWING' ||
+      current.relationship === 'FOLLOW_REQUESTED' ||
+      (acceptNotFollowing && current.relationship === 'NOT_FOLLOWING');
+    if (confirmable) {
       consecutive = current.relationship === previous ? consecutive + 1 : 1;
       previous = current.relationship;
       if (consecutive >= 2) {
@@ -240,23 +279,28 @@ async function confirmAfterReadOnlyReload(
   page: Page,
   readOptions: ReadSignalsOptions | undefined,
   expectedUsername: string | undefined,
+  network: ReturnType<typeof observePositiveProfileRelationship> | null,
 ): Promise<ObservedRelationship> {
-  const network = expectedUsername
-    ? observePositiveProfileRelationship(page, expectedUsername)
-    : null;
   try {
     await page.reload({ waitUntil: 'domcontentloaded', timeout: 10_000 });
     await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => undefined);
-    await page.waitForTimeout(600);
-    const visual = await waitForStableConfirmation(page, readOptions, expectedUsername, 2000);
-    if (visual.relationship !== 'UNKNOWN' || visual.terminal) {
+    // Após a recarga somente leitura, concede até 3s para o Instagram
+    // restabelecer o controle de relacionamento. Nunca repete o clique.
+    const visual = await waitForStableConfirmation(page, readOptions, expectedUsername, 3000, true);
+    if (
+      visual.relationship === 'FOLLOWING' ||
+      visual.relationship === 'FOLLOW_REQUESTED' ||
+      visual.terminal
+    ) {
       return visual.relationship;
     }
-    return (await network?.waitFor(500)) ?? 'UNKNOWN';
+    const networkRelationship = (await network?.waitFor(500)) ?? null;
+    if (networkRelationship) {
+      return networkRelationship;
+    }
+    return visual.relationship;
   } catch {
     return 'UNKNOWN';
-  } finally {
-    network?.dispose();
   }
 }
 
@@ -339,34 +383,55 @@ export async function performFollow(
     }
   }
 
-  const click = await clickPrimaryFollow(page, options.expectedUsername);
-  if (!click.clicked) {
-    return {
-      clicked: false,
-      relationship: 'UNKNOWN',
-      notClickedReason:
-        click.notClickedReason ?? 'botão principal indisponível na verificação final',
-    };
-  }
-  const confirmation = await waitForStableConfirmation(
-    page,
-    readOptions,
-    options.expectedUsername,
-    options.confirmationTimeoutMs ?? 5000,
-  );
-  if (confirmation.relationship !== 'UNKNOWN') {
-    return { clicked: true, relationship: confirmation.relationship };
-  }
-  if (confirmation.terminal) {
-    return { clicked: true, relationship: 'UNKNOWN' };
-  }
+  // Começa antes do clique para não perder a resposta que confirma a ação
+  // quando o DOM falha logo depois. O observador é somente leitura e aceita
+  // apenas estado positivo explicitamente ligado ao username esperado.
+  const network = options.expectedUsername
+    ? observePositiveProfileRelationship(page, options.expectedUsername)
+    : null;
+  try {
+    const click = await clickPrimaryFollow(page, options.expectedUsername);
+    if (!click.clicked) {
+      return {
+        clicked: false,
+        relationship: 'UNKNOWN',
+        notClickedReason:
+          click.notClickedReason ?? 'botão principal indisponível na verificação final',
+      };
+    }
+    const confirmation = await waitForStableConfirmation(
+      page,
+      readOptions,
+      options.expectedUsername,
+      options.confirmationTimeoutMs ?? 5000,
+    );
+    if (confirmation.relationship !== 'UNKNOWN') {
+      return { clicked: true, relationship: confirmation.relationship };
+    }
+    if (confirmation.terminal) {
+      return { clicked: true, relationship: 'UNKNOWN' };
+    }
 
-  // Exceção, não caminho normal: depois de um clique despachado cujo DOM
-  // quebrou, faz uma única recarga somente leitura. Nunca repete a ação.
-  const reloadedRelationship = await confirmAfterReadOnlyReload(
-    page,
-    readOptions,
-    options.expectedUsername,
-  );
-  return { clicked: true, relationship: reloadedRelationship };
+    const networkRelationship = network?.current();
+    if (networkRelationship) {
+      return { clicked: true, relationship: networkRelationship };
+    }
+
+    // Exceção, não caminho normal: depois de um clique despachado cujo DOM
+    // quebrou, faz uma única recarga somente leitura. Nunca repete a ação.
+    const reloadedRelationship = await confirmAfterReadOnlyReload(
+      page,
+      readOptions,
+      options.expectedUsername,
+      network,
+    );
+    const notAppliedReason = network?.failure() ?? network?.diagnostic();
+    return {
+      clicked: true,
+      relationship: reloadedRelationship,
+      ...(reloadedRelationship === 'NOT_FOLLOWING' && notAppliedReason ? { notAppliedReason } : {}),
+    };
+  } finally {
+    network?.dispose();
+  }
 }

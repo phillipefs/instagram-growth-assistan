@@ -588,8 +588,9 @@ ao mesmo username e ao bloco de estatísticas do perfil. Botões de `Sugestões 
 você` são excluídos mesmo quando o Instagram os coloca dentro do mesmo `header`.
 Se o controle não existir, estiver duplicado, mudar entre as leituras ou ficar
 invisível/desabilitado, o item é registrado como `SKIPPED` sem clique e o lote
-continua. Uma `Falha no carregamento` restrita à grade de posts não invalida um
-cabeçalho reconhecido com botão principal válido.
+continua. Uma `Falha no carregamento` impede o clique somente quando afeta o
+cabeçalho ou o controle principal. Se ela estiver restrita à grade de publicações,
+username, estatísticas e botão `Seguir` válidos permitem que o follow prossiga.
 
 O trial e o clique usam um controle estruturalmente ligado ao alvo. Se o React
 substituir o nó antes do clique, o novo nó só é aceito depois de nova resolução
@@ -599,10 +600,22 @@ só é aceita quando o controle primário ligado ao alvo mostra `Seguindo` ou
 `Solicitado` em duas leituras consecutivas; uma mudança transitória não basta.
 A segunda abertura não ocorre no caminho normal: existe somente uma recarga de
 leitura excepcional se um clique foi despachado e nenhuma confirmação permaneceu
-visível. Nessa recarga excepcional, uma resposta do próprio perfil com
-`friendship_status.following` ou solicitação enviada também confirma a ação,
-sempre correlacionada ao username exato. Se essa verificação também ficar desconhecida, a ação é ambígua e a
+visível. Um observador somente leitura é iniciado antes do clique para capturar a
+resposta da própria ação e permanece ativo durante a recarga. Uma resposta com
+`friendship_status.following` ou solicitação enviada confirma a ação somente
+quando correlacionada ao username exato. Se essa verificação também ficar desconhecida, a ação é ambígua e a
 execução para para revisão.
+
+Quando a recarga termina normalmente e o controle primário permanece em `Seguir`,
+a ferramenta confirma que a ação não foi aplicada. O item vira `SKIPPED`, sem
+novo clique, continua contando como tentativa real e não interrompe o lote.
+Se isso ocorrer três vezes consecutivas, o lote é interrompido: a repetição
+indica que a plataforma não está aceitando as ações, e continuar descartaria
+candidatos sem benefício.
+
+Esses skips transitórios não eliminam definitivamente o candidato. Uma nova
+execução explícita do mesmo plano pode tentar novamente, criando outra tentativa
+auditável. Skips definitivos e follows já confirmados continuam idempotentes.
 
 ```bash
 # genérico
@@ -919,7 +932,10 @@ ferramenta falha "fechada" (na dúvida, não age).
 
 - **`resultado ambíguo; revisão manual necessária`**
   A ferramenta clicou mas **não conseguiu confirmar** visualmente o resultado.
-  O lote para por segurança. Faça uma leitura posterior. Se a interface ou o
+  A resposta positiva do próprio clique também é observada, sempre vinculada ao
+  username exato. Se ela não confirmar, a ferramenta faz uma única recarga somente
+  leitura e aguarda até 3 segundos, sem repetir o clique. Se ainda ficar desconhecido,
+  o lote para por segurança. Faça uma leitura posterior. Se a interface ou o
   `friendship_status` correlacionado ao username exato comprovar `Seguindo` ou
   `Solicitado`, reconcilie sem novo clique:
   ```bash
@@ -932,6 +948,12 @@ ferramenta falha "fechada" (na dúvida, não age).
   No caminho `skip`, a tentativa original continua ambígua e nenhum ciclo de
   follow é criado. No caminho `confirm`, a tentativa e o ciclo `TOOL_CLICK` são
   atualizados pela observação. Depois, reexecute o mesmo plano com limite positivo.
+
+- **`mutação GraphQL rejeitada` / `PLATFORM_REJECTED`**
+  A interface enviou o follow, mas o próprio Instagram respondeu com erro e o
+  perfil continuou em `Seguir`. A ferramenta registra `FAILED` e para sem repetir
+  o clique. Teste o follow manualmente na mesma sessão; só execute novamente o
+  plano, por um novo comando explícito, depois que a ação manual persistir.
 
 - **`falha na ação; parada sem repetição automática` durante unfollow**
   Se a evidência ou uma leitura posterior mostrar `Seguir`, reconcilie sem novo clique:

@@ -31,6 +31,7 @@ class FakeDriver implements FollowDriver {
     private readonly followersCount: number | null = null,
     private readonly followingCount: number | null = null,
     private readonly followButtonAvailable = true,
+    private readonly notAppliedReason?: string,
   ) {}
   inspect() {
     return Promise.resolve({
@@ -46,6 +47,7 @@ class FakeDriver implements FollowDriver {
     return Promise.resolve({
       clicked: this.followButtonAvailable,
       relationship: this.followButtonAvailable ? this.followResult : 'UNKNOWN',
+      ...(this.notAppliedReason ? { notAppliedReason: this.notAppliedReason } : {}),
     });
   }
   screenshot() {
@@ -202,7 +204,7 @@ describe('runFollow', () => {
     expect(driver.followCalls).toBe(0);
   });
 
-  it('fecha o lote em resultado ambíguo', async () => {
+  it('continua o lote quando a recarga confirma que o follow não foi aplicado', async () => {
     const account = new LocalAccountRepo(db).create({ username: 'minha_conta' });
     const driver = new FakeDriver('NOT_FOLLOWING', 'NOT_FOLLOWING');
     const summary = await runFollow(db, seedItems(['u1', 'u2']), driver, new FakeConfirmer(), {
@@ -210,16 +212,68 @@ describe('runFollow', () => {
       limit: 5,
       ...baseOptions(account.id),
     });
-    expect(summary.ambiguous).toBe(1);
+    expect(summary.ambiguous).toBe(0);
     expect(summary.confirmed).toBe(0);
+    expect(summary.skipped).toBe(2);
+    expect(summary.stopped).toBe(false);
+  });
+
+  it('interrompe após três follows consecutivos comprovadamente não aplicados', async () => {
+    const account = new LocalAccountRepo(db).create({ username: 'minha_conta' });
+    const driver = new FakeDriver('NOT_FOLLOWING', 'NOT_FOLLOWING');
+    const summary = await runFollow(
+      db,
+      seedItems(['u1', 'u2', 'u3', 'u4']),
+      driver,
+      new FakeConfirmer(),
+      {
+        mode: 'supervised-batch',
+        limit: 5,
+        ...baseOptions(account.id),
+      },
+    );
+    expect(summary.skipped).toBe(3);
+    expect(summary.ambiguous).toBe(0);
     expect(summary.stopped).toBe(true);
+    expect(summary.stopReason).toMatch(/3 ações consecutivas não foram aplicadas/);
+    expect(driver.followCalls).toBe(3);
+  });
+
+  it('interrompe imediatamente quando o Instagram rejeita a mutação de follow', async () => {
+    const account = new LocalAccountRepo(db).create({ username: 'minha_conta' });
+    const driver = new FakeDriver(
+      'NOT_FOLLOWING',
+      'NOT_FOLLOWING',
+      'SAFE',
+      '/evidence/platform-rejected.png',
+      null,
+      null,
+      true,
+      'mutação GraphQL rejeitada: code=1675030 summary=Erro de consulta',
+    );
+    const items = seedItems(['u1', 'u2']);
+    const summary = await runFollow(db, items, driver, new FakeConfirmer(), {
+      mode: 'supervised-batch',
+      limit: 5,
+      ...baseOptions(account.id),
+    });
+
+    expect(summary.failed).toBe(1);
+    expect(summary.skipped).toBe(0);
+    expect(summary.stopped).toBe(true);
+    expect(summary.stopReason).toContain('mutação GraphQL rejeitada');
+    expect(driver.followCalls).toBe(1);
+    const attempts = new ActionAttemptRepo(db).listByProfileId(items[0]!.profileId);
+    expect(attempts[0]?.state).toBe('FAILED');
+    expect(attempts[0]?.errorCategory).toBe('PLATFORM_REJECTED');
+    expect(attempts[0]?.screenshotPath).toBe('/evidence/platform-rejected.png');
   });
 
   it('captura evidência (screenshot) no resultado ambíguo', async () => {
     const account = new LocalAccountRepo(db).create({ username: 'minha_conta' });
     const driver = new FakeDriver(
       'NOT_FOLLOWING',
-      'NOT_FOLLOWING',
+      'UNKNOWN',
       'SAFE',
       '/evidence/follow-ambiguous.png',
     );

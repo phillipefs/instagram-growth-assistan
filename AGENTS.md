@@ -17,6 +17,10 @@ e documentação.
 ## Falha fechada
 
 - Estado desconhecido significa **não clicar**.
+- Após um clique já despachado cujo resultado ainda esteja desconhecido, é
+  permitida **uma única recarga somente leitura** e uma espera técnica de até
+  **3 segundos** para confirmar o estado. Essa confirmação adicional nunca
+  repete o clique nem autoriza outra ação externa.
 - Parar imediatamente em: CAPTCHA, desafio/checkpoint, aviso de atividade,
   sessão expirada, troca da conta ativa, domínio inesperado, interface
   desconhecida, repetição de erro, resultado não confirmado ou divergência entre

@@ -26,6 +26,7 @@ const STATE_ICON: Record<ActionState, string> = {
 const PROGRESS_LABEL: Record<BatchProgress['outcome'], string> = {
   CONFIRMED: 'confirmado ✓',
   SKIPPED: 'pulado',
+  PREVIOUS_SKIP: 'já pulado',
   IDEMPOTENT_SKIP: 'já feito',
   REVIEW: 'revisar',
   AMBIGUOUS: 'ambíguo ?',

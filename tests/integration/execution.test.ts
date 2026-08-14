@@ -325,6 +325,53 @@ describe('runActionBatch', () => {
     expect(summary.stopped).toBe(false);
   });
 
+  it('permite nova tentativa explícita de skip transitório em outra run', async () => {
+    const account = new LocalAccountRepo(db).create({ username: 'c' });
+    const actions = new ActionAttemptRepo(db);
+    const items = seedItems(['u1']);
+    let executions = 0;
+    const hooks = {
+      evaluate: () => ({ outcome: 'PROCEED' as const, reason: '' }),
+      execute: () => {
+        executions += 1;
+        return Promise.resolve(
+          executions === 1
+            ? {
+                result: 'SKIPPED' as const,
+                actionDispatched: true,
+                errorCategory: 'TRANSIENT_NOT_APPLIED',
+              }
+            : { result: 'CONFIRMED' as const },
+        );
+      },
+    };
+    const base = {
+      localAccountId: account.id,
+      localAccountUsername: 'c',
+      actionType: 'FOLLOW' as const,
+      limit: 10,
+    };
+    const runs = new RunRepo(db);
+    const run1 = runs.create({
+      type: 'FOLLOW',
+      mode: 'supervised-batch',
+      localAccountId: account.id,
+    });
+    const run2 = runs.create({
+      type: 'FOLLOW',
+      mode: 'supervised-batch',
+      localAccountId: account.id,
+    });
+
+    const first = await runActionBatch(actions, items, { ...base, runId: run1.id }, hooks);
+    const second = await runActionBatch(actions, items, { ...base, runId: run2.id }, hooks);
+
+    expect(first.skipped).toBe(1);
+    expect(second.confirmed).toBe(1);
+    expect(executions).toBe(2);
+    expect(actions.listByProfileId(items[0]!.profileId)).toHaveLength(2);
+  });
+
   it('emite progresso por item via onProgress', async () => {
     const account = new LocalAccountRepo(db).create({ username: 'c' });
     const actions = new ActionAttemptRepo(db);

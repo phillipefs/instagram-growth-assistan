@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { findPositiveRelationshipForUsername } from '../../src/browser/profile-network-relationship.js';
+import {
+  findPositiveRelationshipForUsername,
+  findPositiveRelationshipInFollowMutation,
+} from '../../src/browser/profile-network-relationship.js';
 
 describe('findPositiveRelationshipForUsername', () => {
   it('confirma following somente para o username exato', () => {
@@ -40,5 +43,20 @@ describe('findPositiveRelationshipForUsername', () => {
         'nao_confirmado',
       ),
     ).toBeNull();
+  });
+});
+
+describe('findPositiveRelationshipInFollowMutation', () => {
+  it('aceita friendship_status sem username no endpoint de mutação', () => {
+    expect(
+      findPositiveRelationshipInFollowMutation({
+        friendship_status: { following: true, outgoing_request: false },
+      }),
+    ).toBe('FOLLOWING');
+    expect(
+      findPositiveRelationshipInFollowMutation({
+        friendship_status: { following: false, outgoing_request: true },
+      }),
+    ).toBe('FOLLOW_REQUESTED');
   });
 });

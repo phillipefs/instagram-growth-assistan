@@ -17,9 +17,14 @@ export type ExecuteResult = 'CONFIRMED' | 'AMBIGUOUS' | 'FAILED' | 'SKIPPED';
 
 export interface BatchHooks {
   readonly evaluate: (item: BatchItem) => Promise<PreActionDecision> | PreActionDecision;
-  readonly execute: (
-    item: BatchItem,
-  ) => Promise<{ result: ExecuteResult; detail?: string; screenshotPath?: string }>;
+  readonly execute: (item: BatchItem) => Promise<{
+    result: ExecuteResult;
+    detail?: string;
+    screenshotPath?: string;
+    /** `SKIPPED` posterior a um clique comprovadamente não aplicado. */
+    actionDispatched?: boolean;
+    errorCategory?: string;
+  }>;
 }
 
 export interface BatchConfig {
@@ -31,10 +36,19 @@ export interface BatchConfig {
   readonly runId?: string;
   /** Callback opcional de progresso, chamado a cada item processado. */
   readonly onProgress?: (progress: BatchProgress) => void;
+  /** Interrompe quando a plataforma confirma esta quantidade de ações seguidas não aplicadas. */
+  readonly maxConsecutiveNotApplied?: number;
 }
 
 export type BatchOutcome =
-  'CONFIRMED' | 'SKIPPED' | 'REVIEW' | 'AMBIGUOUS' | 'FAILED' | 'IDEMPOTENT_SKIP' | 'STOP';
+  | 'CONFIRMED'
+  | 'SKIPPED'
+  | 'PREVIOUS_SKIP'
+  | 'REVIEW'
+  | 'AMBIGUOUS'
+  | 'FAILED'
+  | 'IDEMPOTENT_SKIP'
+  | 'STOP';
 
 export interface BatchProgress {
   readonly processed: number;
@@ -81,6 +95,8 @@ export async function runActionBatch(
     stopped: false,
     stopReason: null,
   };
+  const maxConsecutiveNotApplied = Math.max(1, Math.floor(config.maxConsecutiveNotApplied ?? 3));
+  let consecutiveNotApplied = 0;
 
   const emit = (progressItem: BatchItem, outcome: BatchOutcome): void => {
     config.onProgress?.({
@@ -102,7 +118,7 @@ export async function runActionBatch(
       break;
     }
 
-    const key = buildIdempotencyKey({
+    let key = buildIdempotencyKey({
       localAccount: config.localAccountUsername,
       actionType: config.actionType,
       targetEntityId: item.targetEntityId,
@@ -127,7 +143,7 @@ export async function runActionBatch(
         ) {
           summary.skipped += 1;
           summary.processed += 1;
-          emit(item, 'SKIPPED');
+          emit(item, 'PREVIOUS_SKIP');
           continue;
         }
         summary.stopped = true;
@@ -136,11 +152,29 @@ export async function runActionBatch(
         break;
       }
       if (existing.state === 'FAILED' || existing.state === 'SKIPPED') {
-        // Sem repetição automática.
-        summary.skipped += 1;
-        summary.processed += 1;
-        emit(item, 'SKIPPED');
-        continue;
+        const transient =
+          existing.errorCategory === 'TRANSIENT_NOT_APPLIED' ||
+          existing.errorCategory === 'TRANSIENT_PRE_ACTION' ||
+          existing.result?.startsWith('Falha no carregamento') === true ||
+          existing.result?.startsWith('clique despachado, mas a recarga confirmou') === true;
+        if (transient && config.runId && existing.runId !== config.runId) {
+          // Uma nova execução explícita pode tentar novamente falhas transitórias,
+          // preservando a tentativa anterior e usando uma nova chave auditável.
+          key = buildIdempotencyKey({
+            localAccount: config.localAccountUsername,
+            actionType: config.actionType,
+            targetEntityId: `${item.targetEntityId}:retry:${config.runId}`,
+            ...(item.relationshipCycleId ? { relationshipCycleId: item.relationshipCycleId } : {}),
+            ...(item.planItemId ? { planItemId: item.planItemId } : {}),
+            ...(item.mediaId ? { mediaId: item.mediaId } : {}),
+          });
+        } else {
+          // Sem repetição dentro da mesma execução.
+          summary.skipped += 1;
+          summary.processed += 1;
+          emit(item, 'PREVIOUS_SKIP');
+          continue;
+        }
       }
     }
 
@@ -156,7 +190,12 @@ export async function runActionBatch(
       const prep = actions.prepare(basePrepare(config, item, key));
       const detail =
         decision.outcome === 'REVIEW' ? `NEEDS_REVIEW: ${decision.reason}` : decision.reason;
-      actions.transition(prep.attempt.id, 'SKIPPED', { result: detail });
+      actions.transition(prep.attempt.id, 'SKIPPED', {
+        result: detail,
+        ...(decision.reason.startsWith('Falha no carregamento')
+          ? { errorCategory: 'TRANSIENT_PRE_ACTION' }
+          : {}),
+      });
       if (decision.outcome === 'REVIEW') {
         summary.review += 1;
       } else {
@@ -176,18 +215,29 @@ export async function runActionBatch(
     actions.transition(prep.attempt.id, res.result, {
       ...(res.detail ? { result: res.detail } : {}),
       ...(res.screenshotPath ? { screenshotPath: res.screenshotPath } : {}),
+      ...(res.errorCategory ? { errorCategory: res.errorCategory } : {}),
     });
     summary.processed += 1;
 
     if (res.result === 'SKIPPED') {
-      // A guarda no momento exato da ação constatou que não havia alvo clicável.
-      // Portanto não houve ação real e o item não consome o limite.
-      summary.proceeded -= 1;
+      // Sem clique, o item não consome o limite. Quando houve clique e a recarga
+      // comprovou que nada foi aplicado, a tentativa continua contando.
+      if (!res.actionDispatched) {
+        summary.proceeded -= 1;
+      } else {
+        consecutiveNotApplied += 1;
+      }
       summary.skipped += 1;
       emit(item, 'SKIPPED');
+      if (res.actionDispatched && consecutiveNotApplied >= maxConsecutiveNotApplied) {
+        summary.stopped = true;
+        summary.stopReason = `${consecutiveNotApplied} ações consecutivas não foram aplicadas; interrompido para evitar descartar candidatos`;
+        break;
+      }
       continue;
     }
     if (res.result === 'CONFIRMED') {
+      consecutiveNotApplied = 0;
       summary.confirmed += 1;
       emit(item, 'CONFIRMED');
       continue;
@@ -201,7 +251,7 @@ export async function runActionBatch(
     }
     summary.failed += 1;
     summary.stopped = true;
-    summary.stopReason = 'falha na ação; parada sem repetição automática';
+    summary.stopReason = `falha na ação; parada sem repetição automática${res.detail ? `: ${res.detail}` : ''}`;
     emit(item, 'FAILED');
     break;
   }

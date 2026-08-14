@@ -200,6 +200,42 @@ test('não aceita confirmação transitória antes de o DOM entrar em falha', as
   expect(result).toEqual({ clicked: true, relationship: 'UNKNOWN' });
 });
 
+test('confirma pela resposta do clique quando o DOM entra em falha', async ({ page }) => {
+  await page.route('https://www.instagram.com/api/follow-test', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: { 'access-control-allow-origin': '*' },
+      body: JSON.stringify({
+        user: {
+          username: 'alvo_rede',
+          friendship_status: { following: true },
+        },
+      }),
+    });
+  });
+  await page.setContent(`
+    <header>
+      <section>
+        <h2>alvo_rede</h2>
+        <div>20 posts 500 seguidores 300 seguindo</div>
+        <button onclick="
+          fetch('https://www.instagram.com/api/follow-test');
+          this.remove();
+          document.querySelector('main').textContent='Falha no carregamento.';
+        ">Seguir</button>
+      </section>
+    </header>
+    <main>Conteúdo</main>
+  `);
+  const result = await performFollow(page, readOptions, {
+    expectedUsername: 'alvo_rede',
+    stabilityDelayMs: 10,
+    confirmationTimeoutMs: 100,
+  });
+  expect(result).toEqual({ clicked: true, relationship: 'FOLLOWING' });
+});
+
 test('não confirma o alvo quando apenas uma sugestão muda para Seguindo', async ({ page }) => {
   await page.setContent(`
     <header>
@@ -293,6 +329,21 @@ test('recarrega somente na exceção pós-clique sem confirmação', async ({ pa
   expect(navigations).toBe(1);
 });
 
+test('confirma que o follow não foi aplicado quando Seguir permanece após a recarga', async ({
+  page,
+}) => {
+  await page.goto(fixtureUrl('follow_button.html'));
+  await page.getByTestId('follow-button').evaluate((button) => {
+    button.removeAttribute('onclick');
+  });
+  const result = await performFollow(page, readOptions, {
+    expectedUsername: 'alvo',
+    stabilityDelayMs: 10,
+    confirmationTimeoutMs: 100,
+  });
+  expect(result).toEqual({ clicked: true, relationship: 'NOT_FOLLOWING' });
+});
+
 test('não clica quando o cabeçalho pertence a outro username', async ({ page }) => {
   await page.goto(fixtureUrl('follow_button.html'));
   const result = await performFollow(page, readOptions, {
@@ -371,7 +422,9 @@ test('tolera substituição do botão pelo React antes do clique', async ({ page
   await expect(page.locator('#replacement')).toHaveText('Seguindo');
 });
 
-test('ignora falha parcial da grade quando o controle principal está válido', async ({ page }) => {
+test('segue quando a falha de carregamento está apenas na grade de publicações', async ({
+  page,
+}) => {
   await page.goto(fixtureUrl('follow_button.html'));
   await page
     .getByRole('main')
@@ -388,6 +441,24 @@ test('ignora falha parcial da grade quando o controle principal está válido', 
   await expect(page.getByTestId('follow-button')).toHaveAttribute('data-state', 'FOLLOWING');
 });
 
+test('não clica quando a falha de carregamento está no cabeçalho principal', async ({ page }) => {
+  await page.goto(fixtureUrl('follow_button.html'));
+  await page.locator('header').evaluate((header) => {
+    const failure = header.ownerDocument.createElement('div');
+    failure.textContent = 'Falha no carregamento.';
+    header.appendChild(failure);
+  });
+  const result = await performFollow(page, readOptions, {
+    expectedUsername: 'alvo',
+    stabilityChecks: 3,
+    stabilityDelayMs: 10,
+  });
+  expect(result.clicked).toBe(false);
+  expect(result.relationship).toBe('UNKNOWN');
+  expect(result.notClickedReason).toMatch(/Falha no carregamento.*cabeçalho principal/);
+  await expect(page.getByTestId('follow-button')).toHaveAttribute('data-state', 'FOLLOW');
+});
+
 test('não clica quando a falha deixa o perfil sem controle principal', async ({ page }) => {
   await page.setContent(`
     <header><h2>alvo_sem_controle</h2><div>Falha no carregamento.</div></header>
@@ -398,5 +469,5 @@ test('não clica quando a falha deixa o perfil sem controle principal', async ({
     stabilityDelayMs: 10,
   });
   expect(result.clicked).toBe(false);
-  expect(result.notClickedReason).toMatch(/botão principal Seguir ausente/);
+  expect(result.notClickedReason).toMatch(/Falha no carregamento/);
 });
