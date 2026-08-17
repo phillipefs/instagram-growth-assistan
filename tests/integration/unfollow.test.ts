@@ -4,6 +4,7 @@ import { openDatabase } from '../../src/database/connection.js';
 import { runMigrations } from '../../src/database/migrator.js';
 import { MIGRATIONS } from '../../src/database/migrations/index.js';
 import { LocalAccountRepo } from '../../src/database/repositories/accounts.js';
+import { ActionAttemptRepo } from '../../src/database/repositories/actions.js';
 import { ProfileRepo } from '../../src/database/repositories/profiles.js';
 import { RelationshipRepo } from '../../src/database/repositories/relationships.js';
 import type { ObservedRelationship } from '../../src/browser/profile-detector.js';
@@ -183,7 +184,7 @@ describe('runUnfollow', () => {
 
   it('fecha o lote em resultado ambíguo', async () => {
     const account = new LocalAccountRepo(db).create({ username: 'minha_conta' });
-    const driver = new FakeDriver('FOLLOWING', 'FOLLOWING');
+    const driver = new FakeDriver('FOLLOWING', 'UNKNOWN');
     const summary = await runUnfollow(db, seedItems(account.id, [{ username: 'u1', followBack: 'NO' }]), driver, new FakeConfirmer(), {
       mode: 'supervised-batch',
       limit: 5,
@@ -192,6 +193,42 @@ describe('runUnfollow', () => {
     expect(summary.ambiguous).toBe(1);
     expect(summary.confirmed).toBe(0);
     expect(summary.stopped).toBe(true);
+  });
+
+  it('pula tentativa nao aplicada e continua sem fechar o ciclo', async () => {
+    const account = new LocalAccountRepo(db).create({ username: 'minha_conta' });
+    const items = seedItems(account.id, [
+      { username: 'u1', followBack: 'NO' },
+      { username: 'u2', followBack: 'NO' },
+    ]);
+    const driver = new (class extends FakeDriver {
+      private calls = 0;
+      constructor() {
+        super('FOLLOWING', 'FOLLOWING');
+      }
+      override performUnfollow(): Promise<ObservedRelationship> {
+        this.unfollowCalls += 1;
+        this.calls += 1;
+        return Promise.resolve(this.calls === 1 ? 'FOLLOWING' : 'NOT_FOLLOWING');
+      }
+    })();
+
+    const summary = await runUnfollow(db, items, driver, new FakeConfirmer(), {
+      mode: 'supervised-batch',
+      limit: 5,
+      ...baseOptions(account.id),
+    });
+
+    expect(summary.stopped).toBe(false);
+    expect(summary.skipped).toBe(1);
+    expect(summary.confirmed).toBe(1);
+    expect(driver.unfollowCalls).toBe(2);
+    const relationships = new RelationshipRepo(db);
+    expect(relationships.findCycleById(items[0]!.relationshipCycleId)?.unfollowedAt).toBeNull();
+    expect(relationships.findCycleById(items[1]!.relationshipCycleId)?.unfollowedAt).not.toBeNull();
+    const attempts = new ActionAttemptRepo(db).listByProfileId(items[0]!.profileId);
+    expect(attempts[0]?.state).toBe('SKIPPED');
+    expect(attempts[0]?.errorCategory).toBe('TRANSIENT_NOT_APPLIED');
   });
 
   it('limite zero em modo real não executa nada', async () => {

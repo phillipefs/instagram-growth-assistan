@@ -1,5 +1,5 @@
 import type { SqliteDatabase } from '../database/connection.js';
-import type { FollowBackState } from '../domain/states.js';
+import type { FollowBackState, RelationshipState } from '../domain/states.js';
 import { isEligibleForUnfollowByFollowBack } from '../domain/follow-back.js';
 import {
   computeUnfollowWindow,
@@ -13,6 +13,7 @@ export interface UnfollowCandidate {
   readonly relationshipId: string;
   readonly profileId: string;
   readonly username: string;
+  readonly relationshipState: RelationshipState;
   readonly followedAt: string;
   readonly campaignId: string | null;
   readonly followedByTool: boolean;
@@ -28,6 +29,7 @@ interface CohortRow {
   readonly relationship_id: string;
   readonly profile_id: string;
   readonly username: string;
+  readonly relationship_state: string;
   readonly followed_at: string;
   readonly campaign_id: string | null;
   readonly followed_by_tool: number;
@@ -68,7 +70,8 @@ export function loadUnfollowCohort(
   const rows = db
     .prepare(
       `SELECT rc.id AS cycle_id, r.id AS relationship_id, r.profile_id AS profile_id,
-              p.username_display AS username, rc.followed_at AS followed_at, rc.campaign_id AS campaign_id,
+              p.username_display AS username, rc.state AS relationship_state,
+              rc.followed_at AS followed_at, rc.campaign_id AS campaign_id,
               rc.followed_by_tool AS followed_by_tool, rc.follow_back AS follow_back,
               rc.follow_back_checked_at AS follow_back_checked_at,
               CASE WHEN EXISTS (
@@ -91,6 +94,7 @@ export function loadUnfollowCohort(
     relationshipId: row.relationship_id,
     profileId: row.profile_id,
     username: row.username,
+    relationshipState: row.relationship_state as RelationshipState,
     followedAt: row.followed_at,
     campaignId: row.campaign_id,
     followedByTool: row.followed_by_tool === 1,
@@ -146,7 +150,13 @@ function meetsNoFollowBackWaitingRule(
   return now.getTime() >= threshold && checkedAt >= threshold && checkedAt <= now.getTime();
 }
 
-/** Seleciona os candidatos elegíveis, ordenados do follow mais antigo ao mais recente. */
+/** Seleciona os candidatos elegíveis, priorizando FOLLOWING e mantendo antiguidade dentro de cada grupo. */
+function relationshipStatePriority(state: RelationshipState): number {
+  if (state === 'FOLLOWING') return 0;
+  if (state === 'FOLLOW_REQUESTED') return 1;
+  return 2;
+}
+
 export function selectEligibleUnfollowCandidates(
   candidates: readonly UnfollowCandidate[],
   options: UnfollowPreviewOptions,
@@ -178,7 +188,15 @@ export function selectEligibleUnfollowCandidates(
       (c.followBack === 'NO' && meetsNoFollowBackWaitingRule(c, options.noFollowBackAfterDays, now))
     );
   });
-  eligible.sort((a, b) => (a.followedAt < b.followedAt ? -1 : a.followedAt > b.followedAt ? 1 : 0));
+  eligible.sort((a, b) => {
+    const stateDiff =
+      relationshipStatePriority(a.relationshipState) -
+      relationshipStatePriority(b.relationshipState);
+    if (stateDiff !== 0) return stateDiff;
+    if (a.followedAt < b.followedAt) return -1;
+    if (a.followedAt > b.followedAt) return 1;
+    return a.cycleId < b.cycleId ? -1 : a.cycleId > b.cycleId ? 1 : 0;
+  });
   return options.limit && options.limit > 0 ? eligible.slice(0, options.limit) : eligible;
 }
 

@@ -117,6 +117,16 @@ function guardContext(
   };
 }
 
+function unchangedPositiveRelationship(
+  before: ObservedRelationship,
+  after: ObservedRelationship,
+): boolean {
+  return (
+    before === after &&
+    (after === 'FOLLOWING' || after === 'FOLLOW_REQUESTED')
+  );
+}
+
 /**
  * Executa o unfollow supervisionado nos modos suportados.
  *
@@ -241,6 +251,15 @@ export async function runUnfollow(
         const interpreted = interpretUnfollowResult(before, after);
         if (interpreted.result !== 'CONFIRMED') {
           const shot = await driver.screenshot(`unfollow-ambiguous-${item.username}`);
+          if (unchangedPositiveRelationship(before, after)) {
+            return {
+              result: 'SKIPPED',
+              detail: `clique despachado, mas a leitura confirmou que nada mudou (${before} -> ${after})`,
+              actionDispatched: true,
+              errorCategory: 'TRANSIENT_NOT_APPLIED',
+              ...(shot ? { screenshotPath: shot } : {}),
+            };
+          }
           return { ...interpreted, ...(shot ? { screenshotPath: shot } : {}) };
         }
         relationships.closeCycle(item.relationshipCycleId, { unfollowReason: interpreted.detail });

@@ -292,6 +292,81 @@ export function registerReconcileCommands(program: Command): void {
     });
 
   program
+    .command('unfollow:skip-unresolved')
+    .description('Registra o skip manual de um unfollow AMBIGUOUS, sem repetir o clique.')
+    .requiredOption('--run <id>', 'run que contÃ©m a tentativa ambÃ­gua')
+    .requiredOption('--username <username>', 'perfil ambÃ­guo a pular')
+    .option(
+      '--reason <text>',
+      'justificativa registrada na auditoria',
+      'skip manual explÃ­cito; unfollow nÃ£o confirmado',
+    )
+    .option('--confirm', 'confirma que o perfil nÃ£o deve receber nova tentativa automÃ¡tica neste plano')
+    .action(
+      async (options: { run: string; username: string; reason: string; confirm?: boolean }) => {
+        if (!options.confirm) {
+          write({
+            ok: false,
+            error: 'ConfirmaÃ§Ã£o obrigatÃ³ria. Revise o perfil e repita com --confirm.',
+          });
+          process.exitCode = 1;
+          return;
+        }
+
+        const db = openAppDatabase();
+        try {
+          const run = new RunRepo(db).get(options.run);
+          if (!run || run.type !== 'UNFOLLOW') {
+            write({ ok: false, error: `Run de UNFOLLOW nÃ£o encontrada: ${options.run}` });
+            process.exitCode = 1;
+            return;
+          }
+
+          const profile = new ProfileRepo(db).findByUsername(canonicalUsername(options.username));
+          if (!profile) {
+            write({ ok: false, error: `Perfil nÃ£o encontrado: ${options.username}` });
+            process.exitCode = 1;
+            return;
+          }
+
+          const actions = new ActionAttemptRepo(db);
+          const matches = actions
+            .listByRunId(run.id)
+            .filter(
+              (attempt) =>
+                attempt.actionType === 'UNFOLLOW' &&
+                attempt.profileId === profile.id &&
+                attempt.state === 'AMBIGUOUS',
+            );
+          if (matches.length !== 1) {
+            write({
+              ok: false,
+              error: `Esperada exatamente uma tentativa UNFOLLOW ambÃ­gua; encontradas: ${matches.length}.`,
+            });
+            process.exitCode = 1;
+            return;
+          }
+
+          const attempt = matches[0]!;
+          const alreadyReconciled = actions.findReconciliation(attempt.id) !== undefined;
+          const reconciliation = actions.reconcileAmbiguousAsSkipped(attempt.id, options.reason);
+          write({
+            ok: true,
+            username: profile.usernameCanonical,
+            runId: run.id,
+            actionAttemptId: attempt.id,
+            resolution: reconciliation.resolution,
+            alreadyReconciled,
+            warning:
+              'A tentativa original continua AMBIGUOUS e o ciclo nÃ£o foi fechado. Nenhum novo clique serÃ¡ feito para este item neste plano.',
+          });
+        } finally {
+          db.close();
+        }
+      },
+    );
+
+  program
     .command('unfollow:confirm-unresolved')
     .description('Confirma por leitura um unfollow FAILED/AMBIGUOUS, sem repetir o clique.')
     .requiredOption('--run <id>', 'run que contém a tentativa não resolvida')

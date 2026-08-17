@@ -8,7 +8,11 @@ import { ProfileRepo } from '../../src/database/repositories/profiles.js';
 import { RelationshipRepo } from '../../src/database/repositories/relationships.js';
 import { PlanRepo } from '../../src/database/repositories/plans.js';
 import { ActionAttemptRepo } from '../../src/database/repositories/actions.js';
-import type { FollowBackState, RelationshipOrigin } from '../../src/domain/states.js';
+import type {
+  FollowBackState,
+  RelationshipOrigin,
+  RelationshipState,
+} from '../../src/domain/states.js';
 import { computeUnfollowWindow } from '../../src/domain/cohort.js';
 import {
   buildUnfollowPreview,
@@ -30,6 +34,7 @@ function make(
     protected?: boolean;
     followBack?: FollowBackState;
     followBackCheckedAt?: string;
+    relationshipState?: RelationshipState;
   } = {},
 ) {
   const profile = new ProfileRepo(db).upsert({ username });
@@ -40,7 +45,7 @@ function make(
   const cycle = relationships.createCycle({
     relationshipId: rel.id,
     origin: opts.origin ?? 'TOOL_CLICK',
-    state: 'FOLLOWING',
+    state: opts.relationshipState ?? 'FOLLOWING',
     followedAt: opts.followedAt ?? '2026-07-10T00:00:00.000Z',
   });
   if (opts.followBack) {
@@ -212,5 +217,43 @@ describe('planejador de unfollow', () => {
 
     const items = new PlanRepo(db).listItems(result.plan.id);
     expect(items[0]?.relationshipCycleId).not.toBeNull();
+  });
+
+  it('prioriza FOLLOWING antes de FOLLOW_REQUESTED no plano de unfollow', () => {
+    make('solicitado_antigo', {
+      relationshipState: 'FOLLOW_REQUESTED',
+      followedAt: '2026-07-10T00:00:00.000Z',
+      followBack: 'NO',
+      followBackCheckedAt: '2026-07-20T00:00:00.000Z',
+    });
+    make('seguindo_recente', {
+      relationshipState: 'FOLLOWING',
+      followedAt: '2026-07-25T00:00:00.000Z',
+      followBack: 'NO',
+      followBackCheckedAt: '2026-07-30T00:00:00.000Z',
+    });
+    make('seguindo_antigo', {
+      relationshipState: 'FOLLOWING',
+      followedAt: '2026-07-20T00:00:00.000Z',
+      followBack: 'NO',
+      followBackCheckedAt: '2026-07-25T00:00:00.000Z',
+    });
+
+    const result = freezeUnfollowPlan(db, {
+      localAccountId: accountId,
+      filters: { noFollowBackAfterDays: 3 },
+      preserveFollowBacks: true,
+      followBackValidityDays: 3650,
+      followerSnapshotId: 'snapshot-test',
+      followerSnapshotObservedAt: '2026-08-06T11:00:00.000Z',
+      now,
+    });
+
+    expect(result.itemCount).toBe(3);
+    expect(JSON.parse(result.plan.criteriaJson).usernames).toEqual([
+      'seguindo_antigo',
+      'seguindo_recente',
+      'solicitado_antigo',
+    ]);
   });
 });
