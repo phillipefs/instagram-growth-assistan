@@ -30,6 +30,14 @@ test('confirma follow-back pela lista completa de seguidores', async ({ page }) 
   expect(snapshot.usernames.has('nao_segue')).toBe(false);
 });
 
+test('aguarda novos lotes antes de declarar a lista incompleta', async ({ page }) => {
+  await page.goto(fixtureUrl('followers_delayed_batches.html'));
+  const snapshot = await readFollowersList(page, 'appassetlens', 9);
+  expect(snapshot.complete).toBe(true);
+  expect(snapshot.loadedCount).toBe(9);
+  expect(snapshot.usernames.has('follower_09')).toBe(true);
+});
+
 test('não conclui ausência quando a lista está incompleta', async ({ page }) => {
   await page.goto(fixtureUrl('followers_list.html'));
   const snapshot = await readFollowersList(page, 'appassetlens', 4);

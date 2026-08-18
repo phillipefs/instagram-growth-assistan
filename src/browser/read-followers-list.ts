@@ -18,6 +18,11 @@ interface ScrollState {
   readonly clientHeight: number;
 }
 
+const BASE_SCROLL_SETTLE_MS = 350;
+const STALLED_LOADING_WAIT_MS = 6_000;
+const STALLED_LOADING_POLL_MS = 500;
+const STALLED_PASSES_BEFORE_RECOVERY = 4;
+
 function usernameFromHref(href: string | null): string | null {
   if (!href) return null;
   let pathname: string;
@@ -43,6 +48,55 @@ async function collectFollowerUsernames(dialog: Locator): Promise<string[]> {
     }
     return unique;
   });
+}
+
+async function absorbFollowerUsernames(
+  dialog: Locator,
+  usernames: Set<string>,
+): Promise<boolean> {
+  const before = usernames.size;
+  for (const href of await collectFollowerUsernames(dialog)) {
+    const username = usernameFromHref(href);
+    if (username) usernames.add(username);
+  }
+  return usernames.size > before;
+}
+
+async function readFollowerListScroll(dialog: Locator): Promise<ScrollState> {
+  return dialog.evaluate((root, explicitSelector) => {
+    const explicit = root.querySelector(explicitSelector);
+    let scroller: typeof explicit = null;
+    let largestOverflow = 2;
+    if (explicit) {
+      const height = Number(Reflect.get(explicit, 'scrollHeight') ?? 0);
+      const visible = Number(Reflect.get(explicit, 'clientHeight') ?? 0);
+      if (height > visible + 2) {
+        scroller = explicit;
+      }
+    } else {
+      const candidates = [root, ...root.querySelectorAll('div')];
+      for (const element of candidates) {
+        const height = Number(Reflect.get(element, 'scrollHeight') ?? 0);
+        const visible = Number(Reflect.get(element, 'clientHeight') ?? 0);
+        const overflow = height - visible;
+        if (overflow > largestOverflow) {
+          largestOverflow = overflow;
+          scroller = element;
+        }
+      }
+    }
+    if (!scroller) {
+      return { foundScroller: false, before: 0, after: 0, scrollHeight: 0, clientHeight: 0 };
+    }
+    const position = Number(Reflect.get(scroller, 'scrollTop') ?? 0);
+    return {
+      foundScroller: true,
+      before: position,
+      after: position,
+      scrollHeight: Number(Reflect.get(scroller, 'scrollHeight') ?? 0),
+      clientHeight: Number(Reflect.get(scroller, 'clientHeight') ?? 0),
+    };
+  }, followersLocators.scrollContainer);
 }
 
 async function advanceFollowerList(dialog: Locator): Promise<ScrollState> {
@@ -75,7 +129,14 @@ async function advanceFollowerList(dialog: Locator): Promise<ScrollState> {
     const height = Number(Reflect.get(scroller, 'scrollHeight') ?? 0);
     const visible = Number(Reflect.get(scroller, 'clientHeight') ?? 0);
     const step = Math.max(Math.floor(visible * 0.8), 250);
-    Reflect.set(scroller, 'scrollTop', Math.min(before + step, height));
+    const scrollBy = Reflect.get(scroller, 'scrollBy');
+    if (typeof scrollBy === 'function') {
+      Reflect.apply(scrollBy, scroller, [{ top: step, left: 0, behavior: 'instant' }]);
+    } else {
+      Reflect.set(scroller, 'scrollTop', Math.min(before + step, height));
+    }
+    const event = new Event('scroll', { bubbles: true });
+    scroller.dispatchEvent(event);
     return {
       foundScroller: true,
       before,
@@ -84,6 +145,27 @@ async function advanceFollowerList(dialog: Locator): Promise<ScrollState> {
       clientHeight: visible,
     };
   }, followersLocators.scrollContainer);
+}
+
+async function recoverFollowerListLoading(
+  page: Page,
+  dialog: Locator,
+  usernames: Set<string>,
+  loadedBeforeRecovery: number,
+  scrollHeightBeforeRecovery: number,
+): Promise<boolean> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < STALLED_LOADING_WAIT_MS) {
+    await page.waitForTimeout(STALLED_LOADING_POLL_MS);
+    const grew = await absorbFollowerUsernames(dialog, usernames);
+    const scroll = await readFollowerListScroll(dialog);
+    if (grew || usernames.size > loadedBeforeRecovery) return true;
+    if (scroll.foundScroller && scroll.scrollHeight > scrollHeightBeforeRecovery) return true;
+    if (scroll.foundScroller) {
+      await advanceFollowerList(dialog);
+    }
+  }
+  return false;
 }
 
 /**
@@ -149,14 +231,10 @@ export async function readFollowersList(
       await dialog.locator('a[href]').first().waitFor({ state: 'visible', timeout: 8_000 });
     }
 
-    const maxPasses = Math.min(250, Math.max(12, Math.ceil(expectedCount / 3) + 20));
+    const maxPasses = Math.min(2_000, Math.max(60, Math.ceil(expectedCount / 2) + 80));
     let stalledPasses = 0;
-    let previousLoaded = -1;
     for (let pass = 0; pass < maxPasses; pass += 1) {
-      for (const href of await collectFollowerUsernames(dialog)) {
-        const username = usernameFromHref(href);
-        if (username) usernames.add(username);
-      }
+      await absorbFollowerUsernames(dialog, usernames);
       if (usernames.size >= expectedCount) {
         return {
           complete: true,
@@ -167,12 +245,39 @@ export async function readFollowersList(
         };
       }
 
+      const loadedBeforeScroll = usernames.size;
+      const scrollBefore = await readFollowerListScroll(dialog);
       const scroll = await advanceFollowerList(dialog);
-      const progressed = scroll.after > scroll.before || usernames.size > previousLoaded;
+      if (!scroll.foundScroller) break;
+      await page.waitForTimeout(BASE_SCROLL_SETTLE_MS);
+      const grewAfterScroll = await absorbFollowerUsernames(dialog, usernames);
+      if (usernames.size >= expectedCount) {
+        return {
+          complete: true,
+          expectedCount,
+          loadedCount: usernames.size,
+          usernames,
+          reason: 'lista completa carregada',
+        };
+      }
+      const scrollAfter = await readFollowerListScroll(dialog);
+      const progressed =
+        scroll.after > scroll.before ||
+        grewAfterScroll ||
+        usernames.size > loadedBeforeScroll ||
+        scrollAfter.scrollHeight > scrollBefore.scrollHeight;
       stalledPasses = progressed ? 0 : stalledPasses + 1;
-      previousLoaded = usernames.size;
-      if (!scroll.foundScroller || stalledPasses >= 4) break;
-      await page.waitForTimeout(300);
+      if (stalledPasses >= STALLED_PASSES_BEFORE_RECOVERY) {
+        const recovered = await recoverFollowerListLoading(
+          page,
+          dialog,
+          usernames,
+          loadedBeforeScroll,
+          scrollBefore.scrollHeight,
+        );
+        if (!recovered) break;
+        stalledPasses = 0;
+      }
     }
 
     return {

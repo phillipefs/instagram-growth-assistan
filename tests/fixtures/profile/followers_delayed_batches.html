@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <title>appassetlens - Instagram</title>
+    <style>
+      [data-testid='followers-scroll'] {
+        height: 80px;
+        overflow-y: auto;
+      }
+
+      [data-testid='follower-row'] {
+        height: 24px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h2 data-testid="profile-username">appassetlens</h2>
+      <a href="/appassetlens/followers/" data-testid="followers-link">9 seguidores</a>
+    </header>
+    <div data-testid="followers-dialog" role="dialog" hidden>
+      <h1>Seguidores</h1>
+      <div data-testid="followers-scroll">
+        <div data-testid="follower-row"><a href="/follower_01/">follower_01</a></div>
+        <div data-testid="follower-row"><a href="/follower_02/">follower_02</a></div>
+        <div data-testid="follower-row"><a href="/follower_03/">follower_03</a></div>
+        <div data-testid="follower-row"><a href="/follower_04/">follower_04</a></div>
+        <div data-testid="follower-row"><a href="/follower_05/">follower_05</a></div>
+      </div>
+    </div>
+    <script>
+      const batches = [
+        ['follower_06', 'follower_07'],
+        ['follower_08', 'follower_09'],
+      ];
+      let loading = false;
+
+      function appendBatch(scroller) {
+        const batch = batches.shift();
+        if (!batch) return;
+        loading = true;
+        window.setTimeout(() => {
+          for (const username of batch) {
+            const row = document.createElement('div');
+            row.dataset.testid = 'follower-row';
+            const link = document.createElement('a');
+            link.href = `/${username}/`;
+            link.textContent = username;
+            row.append(link);
+            scroller.append(row);
+          }
+          loading = false;
+        }, 1800);
+      }
+
+      document
+        .querySelector('[data-testid="followers-link"]')
+        .addEventListener('click', (event) => {
+          event.preventDefault();
+          const dialog = document.querySelector('[data-testid="followers-dialog"]');
+          const scroller = document.querySelector('[data-testid="followers-scroll"]');
+          dialog.hidden = false;
+          scroller.addEventListener('scroll', () => {
+            const remaining = scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop;
+            if (!loading && remaining <= 2) appendBatch(scroller);
+          });
+        });
+    </script>
+  </body>
+</html>
